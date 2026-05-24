@@ -1,0 +1,316 @@
+:root {
+  color: #f7efe0;
+  background: #050507;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#app {
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  overflow: hidden;
+}
+
+button {
+  font: inherit;
+}
+
+#renderCanvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  touch-action: none;
+  background: #050507;
+}
+
+.screen {
+  position: fixed;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  z-index: 5;
+}
+
+.hidden {
+  display: none !important;
+}
+
+.splash-screen {
+  background: #000;
+}
+
+.splash-copy {
+  display: grid;
+  gap: 16px;
+  width: min(720px, calc(100vw - 40px));
+  border: 0;
+  color: #f3efe6;
+  background: transparent;
+  text-align: center;
+  line-height: 1.45;
+  cursor: pointer;
+}
+
+.splash-copy a {
+  color: #e4c46f;
+}
+
+.github-mark {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 56px;
+  height: 24px;
+  margin: 0 4px;
+  border: 1px solid rgba(255, 255, 255, 0.42);
+  border-radius: 4px;
+  font-size: 12px;
+  color: #fff;
+}
+
+.main-menu {
+  place-items: end start;
+  padding: clamp(24px, 7vw, 92px);
+  pointer-events: none;
+}
+
+.menu-panel {
+  width: min(460px, calc(100vw - 48px));
+  pointer-events: auto;
+}
+
+.kicker {
+  margin: 0 0 10px;
+  color: #d5b65d;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+h1,
+h2 {
+  margin: 0;
+  line-height: 0.98;
+  letter-spacing: 0;
+}
+
+h1 {
+  max-width: 8ch;
+  font-size: clamp(52px, 9vw, 118px);
+}
+
+h2 {
+  font-size: 32px;
+}
+
+.menu-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+  margin-top: 32px;
+}
+
+.menu-actions button,
+.hud-actions button,
+.painting-stats button {
+  min-height: 44px;
+  border: 1px solid rgba(247, 239, 224, 0.28);
+  border-radius: 6px;
+  color: #f7efe0;
+  background: rgba(8, 9, 12, 0.72);
+  cursor: pointer;
+}
+
+.menu-actions button:hover,
+.hud-actions button:hover,
+.painting-stats button:hover {
+  border-color: rgba(228, 196, 111, 0.9);
+  background: rgba(48, 44, 34, 0.84);
+}
+
+.hud {
+  position: fixed;
+  top: 16px;
+  left: 16px;
+  right: 16px;
+  z-index: 4;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  pointer-events: none;
+}
+
+.mode-label {
+  min-width: 132px;
+  padding: 10px 12px;
+  border: 1px solid rgba(247, 239, 224, 0.18);
+  border-radius: 6px;
+  color: #fff9ea;
+  background: rgba(4, 5, 7, 0.64);
+}
+
+.hud-actions {
+  display: flex;
+  gap: 8px;
+  pointer-events: auto;
+}
+
+.hud-actions button {
+  min-width: 92px;
+  padding: 0 14px;
+}
+
+.painting {
+  align-items: stretch;
+  justify-items: stretch;
+  padding: clamp(14px, 3vw, 32px);
+  background: #131519;
+}
+
+.painting-layout {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px;
+  width: min(1180px, 100%);
+  height: 100%;
+  margin: 0 auto;
+}
+
+.painting-toolbar {
+  display: flex;
+  align-items: end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.painting-stats {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: #eee4cf;
+}
+
+.painting-stats span {
+  min-width: 112px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.22);
+}
+
+.painting-stats button {
+  padding: 0 20px;
+}
+
+.painting-canvas-wrap {
+  display: grid;
+  place-items: center;
+  min-height: 0;
+}
+
+#paintingCanvas {
+  width: min(100%, calc((100vh - 138px) * 16 / 9));
+  max-height: calc(100vh - 138px);
+  aspect-ratio: 16 / 9;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  background: #202329;
+  touch-action: none;
+}
+
+.cutscene {
+  grid-template-rows: 1fr auto;
+  gap: 20px;
+  padding: 8vh 4vw;
+  background: #000;
+}
+
+.video-frame {
+  position: relative;
+  width: min(100%, calc(84vh * 16 / 9));
+  aspect-ratio: 16 / 9;
+  overflow: hidden;
+  background: #101010;
+}
+
+.video-frame video,
+.cutscene-fallback {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+
+.video-frame video {
+  object-fit: cover;
+}
+
+.cutscene-fallback {
+  display: grid;
+  place-items: center;
+  color: #bba35d;
+  background:
+    linear-gradient(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.66)),
+    radial-gradient(circle at 50% 35%, #3d362a, #050505 72%);
+  font-size: clamp(28px, 6vw, 72px);
+}
+
+.subtitle-line {
+  min-height: 48px;
+  margin: 0;
+  color: #fff;
+  font-size: clamp(18px, 2.3vw, 30px);
+  text-align: center;
+  text-shadow: 0 2px 8px #000;
+}
+
+@media (max-width: 700px) {
+  .menu-actions,
+  .painting-toolbar,
+  .painting-stats,
+  .hud {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .menu-actions {
+    grid-template-columns: 1fr;
+  }
+
+  .hud {
+    left: 10px;
+    right: 10px;
+  }
+
+  .hud-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .hud-actions button {
+    min-width: 0;
+    padding: 0 8px;
+  }
+
+  .painting-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr auto;
+  }
+
+  .painting-stats span {
+    min-width: 0;
+  }
+}

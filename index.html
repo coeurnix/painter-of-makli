@@ -1,0 +1,70 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Painter of Makli</title>
+  </head>
+  <body>
+    <div id="app">
+      <canvas id="renderCanvas" aria-label="Painter of Makli game canvas"></canvas>
+
+      <section id="splash" class="screen splash-screen" aria-label="Start screen">
+        <div id="beginButton" class="splash-copy" role="button" tabindex="0">
+          <span>Click anywhere to begin.</span>
+          <span>Dreamed up by Coeurnix for <a href="https://itch.io/jam/token-jam-1" target="_blank" rel="noreferrer">Token Game Jam 1</a></span>
+          <span>(MIT) <span class="github-mark" aria-hidden="true">GitHub</span> https://github.com/coeurnix/painter-of-makli</span>
+        </div>
+      </section>
+
+      <section id="mainMenu" class="screen main-menu hidden" aria-label="Main menu">
+        <div class="menu-panel">
+          <p class="kicker">Painter of Makli</p>
+          <h1>Painter of Makli</h1>
+          <div class="menu-actions">
+            <button id="newGameButton" type="button">New Game</button>
+            <button id="loadGameButton" type="button">Load Game</button>
+          </div>
+        </div>
+      </section>
+
+      <section id="hud" class="hud hidden" aria-label="Game HUD">
+        <div id="modeLabel" class="mode-label">Exploration</div>
+        <div class="hud-actions">
+          <button id="paintingModeButton" type="button">Painting</button>
+          <button id="exploreModeButton" type="button">Explore</button>
+          <button id="menuModeButton" type="button">Menu</button>
+        </div>
+      </section>
+
+      <section id="paintingScreen" class="screen painting hidden" aria-label="Painting mode">
+        <div class="painting-layout">
+          <header class="painting-toolbar">
+            <div>
+              <p class="kicker">Restoration Study</p>
+              <h2>Reveal the subject</h2>
+            </div>
+            <div class="painting-stats">
+              <span>Score <strong id="paintScore">0</strong></span>
+              <span>Coverage <strong id="paintCoverage">0%</strong></span>
+              <button id="paintingDoneButton" type="button">Done</button>
+            </div>
+          </header>
+          <div class="painting-canvas-wrap">
+            <canvas id="paintingCanvas"></canvas>
+          </div>
+        </div>
+      </section>
+
+      <section id="cutsceneScreen" class="screen cutscene hidden" aria-label="Cutscene">
+        <div class="video-frame">
+          <video id="cutsceneVideo" playsinline></video>
+          <div id="cutsceneFallback" class="cutscene-fallback">Painter of Makli</div>
+        </div>
+        <p id="subtitleLine" class="subtitle-line"></p>
+      </section>
+    </div>
+
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
