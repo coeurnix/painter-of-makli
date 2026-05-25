@@ -424,8 +424,6 @@ class ExplorationMode {
   private drawMaterial: StandardMaterial;
   private drawHaloMaterial: StandardMaterial;
   private trailMaterial: StandardMaterial;
-  private fakeShadowMaterial: StandardMaterial;
-  private heroShadowMesh: Mesh;
   private glowLayer: GlowLayer;
   private threatMaterial: StandardMaterial;
 
@@ -456,11 +454,6 @@ class ExplorationMode {
     this.trailMaterial.alpha = 0.54;
     this.trailMaterial.backFaceCulling = false;
     this.trailMaterial.disableDepthWrite = true;
-    this.fakeShadowMaterial = makeMaterial(scene, "softFakeShadowMaterial", new Color3(0.055, 0.04, 0.025));
-    this.fakeShadowMaterial.alpha = 0.16;
-    this.fakeShadowMaterial.disableLighting = true;
-    this.fakeShadowMaterial.disableDepthWrite = true;
-    this.fakeShadowMaterial.backFaceCulling = false;
     this.threatMaterial = makeMaterial(scene, "threatVortexMaterial", new Color3(0.012, 0.01, 0.018), new Color3(0.035, 0.008, 0.055));
     this.threatMaterial.alpha = 0.82;
     this.threatMaterial.disableDepthWrite = true;
@@ -477,32 +470,30 @@ class ExplorationMode {
     this.camera.parent = this.root;
 
     const ambient = new HemisphericLight("ambient", new Vector3(-0.4, 1, 0.55), scene);
-    ambient.intensity = 0.18;
-    ambient.diffuse = new Color3(0.38, 0.35, 0.3);
-    ambient.groundColor = new Color3(0.10, 0.085, 0.065);
+    ambient.intensity = 0.22;
+    ambient.diffuse = new Color3(0.42, 0.38, 0.34);
+    ambient.groundColor = new Color3(0.08, 0.065, 0.045);
     ambient.parent = this.root;
 
     const sun = new DirectionalLight("shadowLight", new Vector3(-0.4, -1, -0.35), scene);
-    sun.intensity = 2.45;
-    sun.diffuse = new Color3(1, 0.78, 0.52);
+    sun.intensity = 2.0;
+    sun.diffuse = new Color3(1, 0.84, 0.58);
     sun.position.set(4, 10, 4);
     sun.shadowMinZ = 1;
-    sun.shadowMaxZ = 52;
+    sun.shadowMaxZ = 55;
     sun.autoUpdateExtends = true;
     sun.parent = this.root;
     this.shadowGenerator = new ShadowGenerator(2048, sun);
-    this.shadowGenerator.useBlurCloseExponentialShadowMap = true;
-    this.shadowGenerator.blurKernel = 24;
-    this.shadowGenerator.blurScale = 2;
-    this.shadowGenerator.filteringQuality = ShadowGenerator.QUALITY_MEDIUM;
-    this.shadowGenerator.bias = 0.00018;
-    this.shadowGenerator.normalBias = 0.01;
-    this.shadowGenerator.setDarkness(0);
+    this.shadowGenerator.useContactHardeningShadow = true;
+    this.shadowGenerator.contactHardeningLightSizeUVRatio = 0.08;
+    this.shadowGenerator.filteringQuality = ShadowGenerator.QUALITY_HIGH;
+    this.shadowGenerator.bias = 0.0006;
+    this.shadowGenerator.normalBias = 0.02;
+    this.shadowGenerator.darkness = 0.45;
 
     this.prepareHeroPath();
     this.createPropPlacements();
     this.createTerrain();
-    this.heroShadowMesh = this.createFakeShadow("yusufSoftShadow", 0.85, 0.36, 0.11);
     this.bindInput();
     void this.loadHero();
     void this.loadProps();
@@ -510,11 +501,11 @@ class ExplorationMode {
   }
 
   private configureScene(): void {
-    this.scene.clearColor = new Color4(0.46, 0.42, 0.34, 1);
-    this.scene.ambientColor = new Color3(0.16, 0.14, 0.11);
+    this.scene.clearColor = new Color4(0.32, 0.28, 0.22, 1);
+    this.scene.ambientColor = new Color3(0.12, 0.10, 0.08);
     this.scene.fogMode = Scene.FOGMODE_NONE;
-    this.scene.imageProcessingConfiguration.exposure = 0.82;
-    this.scene.imageProcessingConfiguration.contrast = 1.28;
+    this.scene.imageProcessingConfiguration.exposure = 0.78;
+    this.scene.imageProcessingConfiguration.contrast = 1.38;
   }
 
   setActive(active: boolean): void {
@@ -828,8 +819,6 @@ class ExplorationMode {
         root.rotation.y = placement.rotationY;
         root.scaling.setAll(placement.scale);
         root.parent = this.root;
-        this.createPropFakeShadow(placement);
-
         const entries = container.instantiateModelsToScene((name) => `${root.name}_${name}`, false);
         for (const node of entries.rootNodes) {
           node.parent = root;
@@ -851,28 +840,6 @@ class ExplorationMode {
     this.shadowGenerator.addShadowCaster(mesh, true);
   }
 
-  private createFakeShadow(name: string, length: number, width: number, alpha: number): Mesh {
-    const mesh = MeshBuilder.CreateDisc(name, { radius: 1, tessellation: 48 }, this.scene);
-    mesh.rotation.x = Math.PI / 2;
-    mesh.rotation.y = -0.75;
-    mesh.scaling.set(length, width, 1);
-    mesh.position.y = 0.032;
-    mesh.material = this.fakeShadowMaterial;
-    mesh.visibility = clamp(alpha / this.fakeShadowMaterial.alpha, 0, 1);
-    mesh.parent = this.root;
-    return mesh;
-  }
-
-  private createPropFakeShadow(placement: PropPlacement): void {
-    const isLarge = placement.file.includes("large+ruins");
-    const scale = Math.sqrt(placement.scale);
-    const baseLength = placement.category === "plant" ? 0.7 : placement.category === "rocks" ? 0.95 : placement.category === "graves" ? 0.8 : 1.2;
-    const baseWidth = placement.category === "plant" ? 0.38 : placement.category === "rocks" ? 0.48 : placement.category === "graves" ? 0.34 : 0.58;
-    const shadow = this.createFakeShadow(`propSoftShadow_${placement.category}`, baseLength * scale, baseWidth * scale, isLarge ? 0.14 : 0.095);
-    shadow.position.set(placement.position.x, 0.034, placement.position.z);
-    shadow.rotation.y = placement.rotationY;
-  }
-
   private updateHeroPath(dt: number): void {
     this.pathTime += dt * WALK_SPEED * (this.pathForward ? 1 : -1);
     if (this.pathTime >= this.pathTotalLength) {
@@ -889,17 +856,11 @@ class ExplorationMode {
       this.pathPositionAt(this.pathTime)
     ));
     this.playerRoot.position.copyFrom(position);
-    this.updateHeroFakeShadow(position);
     this.updateHeroTrail(position);
     const yaw = Math.atan2(tangent.x, tangent.z) * 180 / Math.PI;
     this.visualYaw = lerpAngleDegrees(this.visualYaw, yaw, Math.min(1, dt * 12));
     this.visualRoot.rotation.set(0, (this.visualYaw + MODEL_FORWARD_OFFSET) * Math.PI / 180, 0);
     this.visualRoot.position.set(0, 0, 0);
-  }
-
-  private updateHeroFakeShadow(position: Vector3): void {
-    this.heroShadowMesh.position.set(position.x, 0.036, position.z);
-    this.heroShadowMesh.rotation.y = this.visualRoot.rotation.y;
   }
 
   private updateHeroTrail(position: Vector3): void {
@@ -1195,7 +1156,7 @@ class ExplorationMode {
       }
       for (const mesh of result.meshes) {
         if (mesh instanceof Mesh) {
-          mesh.receiveShadows = false;
+          mesh.receiveShadows = true;
           this.makeHeroMeshReadable(mesh);
           this.shadowGenerator.addShadowCaster(mesh, true);
         }
