@@ -25,7 +25,7 @@ import "./styles.css";
 const RESOURCE_ROOT = "/resources/";
 const PROP_ROOT = `${RESOURCE_ROOT}props/`;
 const HERO_MODEL = "yusuf.glb";
-const WALK_SPEED = 1.9;
+const WALK_SPEED = 0.95;
 const MODEL_FORWARD_OFFSET = 90;
 const KEYBOARD_ROTATION_SPEED = 1.9;
 const POINTER_ROTATION_SPEED = 0.0065;
@@ -410,20 +410,11 @@ class ExplorationMode {
   private drawPoints: Vector3[] = [];
   private propPlacements: PropPlacement[] = [];
   private propBlockers: PropBlocker[] = [];
-  private propClusters: Record<PropPlacement["category"], Vector2[]> = {
-    graves: [],
-    plant: [],
-    rocks: [],
-    ruins: []
-  };
   private threats: Threat[] = [];
   private drawMesh: Mesh | null = null;
   private drawHaloMesh: Mesh | null = null;
-  private trailMesh: Mesh | null = null;
-  private trailPoints: Vector3[] = [];
   private drawMaterial: StandardMaterial;
   private drawHaloMaterial: StandardMaterial;
-  private trailMaterial: StandardMaterial;
   private glowLayer: GlowLayer;
   private threatMaterial: StandardMaterial;
 
@@ -450,10 +441,6 @@ class ExplorationMode {
     this.drawHaloMaterial.disableLighting = true;
     this.drawHaloMaterial.disableDepthWrite = true;
     this.drawHaloMaterial.backFaceCulling = false;
-    this.trailMaterial = makeMaterial(scene, "yusufTrailMaterial", new Color3(0.30, 0.23, 0.15), new Color3(0.02, 0.012, 0.006));
-    this.trailMaterial.alpha = 0.54;
-    this.trailMaterial.backFaceCulling = false;
-    this.trailMaterial.disableDepthWrite = true;
     this.threatMaterial = makeMaterial(scene, "threatVortexMaterial", new Color3(0.012, 0.01, 0.018), new Color3(0.035, 0.008, 0.055));
     this.threatMaterial.alpha = 0.82;
     this.threatMaterial.disableDepthWrite = true;
@@ -593,7 +580,7 @@ class ExplorationMode {
     const { diffuse, normal } = this.createTerrainTextures();
     material.diffuseTexture = diffuse;
     material.bumpTexture = normal;
-    material.diffuseColor = new Color3(0.72, 0.65, 0.48);
+    material.diffuseColor = new Color3(0.42, 0.38, 0.32);
     material.specularColor = new Color3(0.05, 0.045, 0.035);
     material.roughness = 0.86;
     material.useParallax = true;
@@ -623,9 +610,9 @@ class ExplorationMode {
         const rock = clamp((stones - 0.56) * 1.9, 0, 1);
         const dirt = clamp((broad - 0.32) * 1.45 + pathWear * 0.55, 0, 1);
         const sand = clamp(1 - rock * 0.8 - dirt * 0.38, 0, 1);
-        const r = 115 * sand + 98 * dirt + 86 * rock + grit * 13;
-        const g = 93 * sand + 72 * dirt + 80 * rock + grit * 10;
-        const b = 58 * sand + 42 * dirt + 66 * rock + grit * 8;
+        const r = 72 * sand + 64 * dirt + 68 * rock + grit * 7;
+        const g = 62 * sand + 52 * dirt + 62 * rock + grit * 5;
+        const b = 48 * sand + 38 * dirt + 56 * rock + grit * 4;
         const i = (y * TERRAIN_TEXTURE_SIZE + x) * 4;
         diffuseImage.data[i] = clamp(r + pathWear * 16, 0, 255);
         diffuseImage.data[i + 1] = clamp(g + pathWear * 10, 0, 255);
@@ -666,43 +653,34 @@ class ExplorationMode {
 
   private createPropPlacements(): void {
     const placements: PropPlacement[] = [];
-    const counts = { ruins: 130, rocks: 240, plant: 320, graves: 90 };
-    this.createPropClusters();
-    for (const category of Object.keys(counts) as PropPlacement["category"][]) {
-      const files = PROP_FILES.filter((file) => this.propCategory(file) === category);
-      for (let i = 0; i < counts[category]; i += 1) {
-        const placement = this.randomPropPlacement(category, files);
+    const instancesPerFile = 3;
+    for (const file of PROP_FILES) {
+      const category = this.propCategory(file);
+      const profile = this.propProfile(category);
+      const scale = this.propScale(file);
+      for (let i = 0; i < instancesPerFile; i += 1) {
+        const placement = this.placeSingleProp(file, category, profile, scale);
         if (placement) placements.push(placement);
       }
     }
     this.propPlacements = placements;
-    this.propBlockers = placements.map((placement) => placement.blocker);
+    this.propBlockers = placements.map((p) => p.blocker);
   }
 
-  private randomPropPlacement(category: PropPlacement["category"], files: readonly string[]): PropPlacement | null {
-    const profile = this.propProfile(category);
+  private placeSingleProp(file: string, category: PropPlacement["category"], profile: ReturnType<ExplorationMode["propProfile"]>, scale: number): PropPlacement | null {
+    const halfSize = new Vector2(profile.halfX * scale, profile.halfZ * scale);
+    const radius = Math.hypot(halfSize.x, halfSize.y);
     for (let attempt = 0; attempt < 900; attempt += 1) {
-      const file = this.choosePropFile(category, files);
-      const scale = this.propScale(file);
-      const halfSize = new Vector2(profile.halfX * scale, profile.halfZ * scale);
-      const radius = Math.hypot(halfSize.x, halfSize.y);
-      const center = Math.random() < 0.78
-        ? this.randomClusteredPoint(category, radius)
-        : this.randomPointNearPath(radius);
+      const center = this.randomPointNearPath(radius);
       const rotationY = category === "ruins"
         ? Math.floor(Math.random() * 4) * Math.PI / 2
         : Math.random() * Math.PI * 2;
-      const blocker: PropBlocker = {
-        center,
-        halfSize,
-        rotationY,
-        radius
-      };
+      const blocker: PropBlocker = { center, halfSize, rotationY, radius };
       if (!this.canPlaceProp(blocker, profile.clearance)) continue;
       return {
         file,
         category,
-        position: new Vector3(center.x, file.includes("large+ruins") ? -0.24 : -0.08, center.y),
+        position: new Vector3(center.x, this.propBaseY(file), center.y),
         rotationY,
         scale,
         blocker
@@ -711,36 +689,14 @@ class ExplorationMode {
     return null;
   }
 
-  private createPropClusters(): void {
-    const counts = { ruins: 12, rocks: 18, plant: 22, graves: 8 };
-    for (const category of Object.keys(counts) as PropPlacement["category"][]) {
-      this.propClusters[category] = [];
-      for (let i = 0; i < counts[category]; i += 1) {
-        this.propClusters[category].push(this.randomPointNearPath(category === "ruins" ? 4.5 : 1.2));
-      }
-    }
-  }
-
-  private randomClusteredPoint(category: PropPlacement["category"], radius: number): Vector2 {
-    const clusters = this.propClusters[category];
-    if (clusters.length === 0) return this.randomPointNearPath(radius);
-    const center = clusters[Math.floor(Math.random() * clusters.length)];
-    const spread = category === "plant" ? 7 : category === "rocks" ? 6 : category === "graves" ? 4.5 : 8.5;
-    const angle = Math.random() * Math.PI * 2;
-    const distance = Math.sqrt(Math.random()) * spread + radius;
-    return new Vector2(center.x + Math.cos(angle) * distance, center.y + Math.sin(angle) * distance);
-  }
-
-  private choosePropFile(category: PropPlacement["category"], files: readonly string[]): string {
-    if (category !== "ruins") return files[Math.floor(Math.random() * files.length)];
-    const large = files.filter((file) => file.includes("large+ruins"));
-    const regular = files.filter((file) => !file.includes("large+ruins"));
-    const pool = large.length > 0 && Math.random() < 0.16 ? large : regular.length > 0 ? regular : files;
-    return pool[Math.floor(Math.random() * pool.length)];
-  }
-
   private propScale(file: string): number {
-    return file.includes("large+ruins") ? 6 : 2;
+    if (this.propCategory(file) === "graves") return 1.125;
+    return file.includes("large+ruins") ? 14 : 4.5;
+  }
+
+  private propBaseY(file: string): number {
+    if (file === "plant (1).glb" || file === "plant (2).glb" || file === "plant (3).glb") return -0.45;
+    return file.includes("large+ruins") ? -0.24 : -0.08;
   }
 
   private randomPointNearPath(radius: number): Vector2 {
@@ -856,25 +812,10 @@ class ExplorationMode {
       this.pathPositionAt(this.pathTime)
     ));
     this.playerRoot.position.copyFrom(position);
-    this.updateHeroTrail(position);
     const yaw = Math.atan2(tangent.x, tangent.z) * 180 / Math.PI;
     this.visualYaw = lerpAngleDegrees(this.visualYaw, yaw, Math.min(1, dt * 12));
     this.visualRoot.rotation.set(0, (this.visualYaw + MODEL_FORWARD_OFFSET) * Math.PI / 180, 0);
     this.visualRoot.position.set(0, 0, 0);
-  }
-
-  private updateHeroTrail(position: Vector3): void {
-    const last = this.trailPoints[this.trailPoints.length - 1];
-    if (last && distanceVec3(last, position) < 0.82) return;
-    const roughPoint = new Vector3(
-      position.x + (hashNoise(position.x * 1.7, position.z * 1.7) - 0.5) * 0.34,
-      0.045,
-      position.z + (hashNoise(position.x * 2.3 + 9.1, position.z * 2.3 - 3.4) - 0.5) * 0.34
-    );
-    this.trailPoints.push(roughPoint);
-    if (this.trailPoints.length > 220) this.trailPoints.shift();
-    if (this.trailPoints.length < 2) return;
-    this.trailMesh = this.updateStrokeMesh(this.trailMesh, "yusufRoughTrail", this.trailPoints, 0.42, 0.045, this.trailMaterial, false);
   }
 
   private pathPositionAt(distance: number): Vector3 {
@@ -1189,9 +1130,16 @@ class ExplorationMode {
     material.forceDepthWrite = true;
     material.fogEnabled = false;
     material.transparencyMode = Material.MATERIAL_OPAQUE;
-    if (material.emissiveColor) material.emissiveColor = new Color3(0.08, 0.075, 0.065);
+    if (material.emissiveColor) material.emissiveColor = Color3.Black();
     if (material.albedoColor && material.albedoColor.r + material.albedoColor.g + material.albedoColor.b < 0.08) {
       material.albedoColor = new Color3(0.42, 0.38, 0.32);
+    }
+    if (material.albedoColor) {
+      material.albedoColor = new Color3(
+        Math.min(1, material.albedoColor.r * 1.6),
+        Math.min(1, material.albedoColor.g * 1.6),
+        Math.min(1, material.albedoColor.b * 1.6)
+      );
     }
   }
 
