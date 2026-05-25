@@ -5,6 +5,7 @@ import { defineConfig, type Plugin } from "vite";
 
 const rootDir = process.cwd();
 const resourcesDir = resolve(rootDir, "resources");
+const dracoDir = resolve(rootDir, "node_modules", "@babylonjs", "core", "assets", "Draco");
 const logDir = resolve(rootDir, "logs");
 const clientLogPath = resolve(logDir, "client-errors.log");
 
@@ -48,6 +49,10 @@ function mimeType(filePath: string): string {
       return "audio/mpeg";
     case ".wav":
       return "audio/wav";
+    case ".wasm":
+      return "application/wasm";
+    case ".js":
+      return "text/javascript";
     default:
       return "application/octet-stream";
   }
@@ -100,14 +105,36 @@ function painterDevPlugin(): Plugin {
           }
         }
 
+        if (req.method === "GET" && req.url.startsWith("/draco/")) {
+          const decodedPath = decodeURIComponent(req.url.split("?")[0]);
+          const relativePath = normalize(decodedPath.replace(/^\/draco\//, ""));
+          const filePath = resolve(dracoDir, relativePath);
+          const safePrefix = `${dracoDir}${sep}`;
+          if (filePath !== dracoDir && filePath.startsWith(safePrefix)) {
+            try {
+              const fileStat = await stat(filePath);
+              if (fileStat.isFile()) {
+                res.setHeader("Content-Type", mimeType(filePath));
+                res.end(await readFile(filePath));
+                return;
+              }
+            } catch {
+              // Fall through to Vite's normal 404 handling.
+            }
+          }
+        }
+
         next();
       });
     },
     closeBundle() {
       const outputResources = resolve(rootDir, "dist", "resources");
+      const outputDraco = resolve(rootDir, "dist", "draco");
       copyDir(resourcesDir, outputResources);
+      copyDir(dracoDir, outputDraco);
       const rel = relative(rootDir, outputResources);
       this.info(`Copied resources to ${rel}`);
+      this.info(`Copied Draco decoder assets to ${relative(rootDir, outputDraco)}`);
     }
   };
 }
