@@ -1,0 +1,16 @@
+{
+  "graves.glb": { "scale": 0.5, "frequency": 70, "baseY": -0.0 },
+  "large+ruins (1).glb": { "scale": 4.0, "frequency": 30, "baseY": -0.24 },
+  "large+ruins (2).glb": { "scale": 4.0, "frequency": 30, "baseY": -0.24 },
+  "large+ruins (3).glb": { "scale": 4.0, "frequency": 30, "baseY": -0.24 },
+  "large+ruins.glb": { "scale": 4.0, "frequency": 30, "baseY": -0.24 },
+  "plant (1).glb": { "scale": 0.5, "frequency": 120, "baseY": -0.45 },
+  "plant (2).glb": { "scale": 0.5, "frequency": 120, "baseY": -0.45 },
+  "plant (3).glb": { "scale": 0.5, "frequency": 120, "baseY": -0.45 },
+  "plant.glb": { "scale": 0.5, "frequency": 120, "baseY": -0.08 },
+  "rocks (1).glb": { "scale": 0.5, "frequency": 150, "baseY": -0.08 },
+  "rocks (2).glb": { "scale": 0.5, "frequency": 150, "baseY": -0.08 },
+  "rocks.glb": { "scale": 0.5, "frequency": 150, "baseY": -0.08 },
+  "ruins (1).glb": { "scale": 1.5, "frequency": 60, "baseY": -0.08 },
+  "ruins.glb": { "scale": 1.5, "frequency": 60, "baseY": -0.08 }
+}

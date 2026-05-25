@@ -49,6 +49,8 @@ function mimeType(filePath: string): string {
       return "audio/mpeg";
     case ".wav":
       return "audio/wav";
+    case ".json":
+      return "application/json";
     case ".wasm":
       return "application/wasm";
     case ".js":
@@ -143,7 +145,7 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
-    sourcemap: true
+    sourcemap: false
   },
   plugins: [painterDevPlugin()]
 });

@@ -1,6 +1,6 @@
 import { AnimationGroup } from "@babylonjs/core/Animations/animationGroup";
 import { FreeCamera } from "@babylonjs/core/Cameras/freeCamera";
-import "@babylonjs/core/Culling/ray";
+import { Ray } from "@babylonjs/core/Culling/ray";
 import { Engine } from "@babylonjs/core/Engines/engine";
 import { DirectionalLight } from "@babylonjs/core/Lights/directionalLight";
 import { HemisphericLight } from "@babylonjs/core/Lights/hemisphericLight";
@@ -12,7 +12,7 @@ import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
 import { DynamicTexture } from "@babylonjs/core/Materials/Textures/dynamicTexture";
 import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import { Color3, Color4 } from "@babylonjs/core/Maths/math.color";
-import { Matrix, Vector2, Vector3 } from "@babylonjs/core/Maths/math.vector";
+import { Vector2, Vector3 } from "@babylonjs/core/Maths/math.vector";
 import { Mesh } from "@babylonjs/core/Meshes/mesh";
 import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData";
@@ -23,46 +23,68 @@ import "@babylonjs/loaders/glTF";
 import "./styles.css";
 
 const RESOURCE_ROOT = "/resources/";
-const PROP_ROOT = `${RESOURCE_ROOT}props/`;
+const MAKLI_MAP_ROOT = `${RESOURCE_ROOT}makli/`;
+const MAKLI_MAP_MODEL = "makli_necropolis_long_instanced.glb";
+const MAKLI_TERRAIN_ATLAS = "makli_lit_albedo_atlas.png";
+const MAKLI_ATLAS_METADATA = "makli_necropolis_atlas_metadata.json";
 const HERO_MODEL = "yusuf.glb";
-const WALK_SPEED = 0.95;
+const MAKLI_MAP_SCALE = 2 / 3;
+const WALK_SPEED = 1.35;
 const MODEL_FORWARD_OFFSET = 90;
 const KEYBOARD_ROTATION_SPEED = 1.9;
 const POINTER_ROTATION_SPEED = 0.0065;
 const GAMEPAD_ROTATION_SPEED = 2.4;
-const DRAW_MAX_LENGTH = 20;
+const DRAW_MAX_LENGTH = 10;
 const DRAW_MAX_SECONDS = 3;
-const DRAW_CORE_Y = 0.135;
-const DRAW_HALO_Y = 0.105;
+const DRAW_Y_OFFSET = 0.05;
 const DRAW_CORE_HALF_WIDTH = 0.075;
 const DRAW_HALO_HALF_WIDTH = 0.22;
-const HERO_PATH_CLEARANCE = 2.4;
 const THREAT_SPEED = 1.18;
 const THREAT_AVOIDANCE_RANGE = 2.8;
+const THREAT_BASE_MAX_COUNT = 8;
+const THREAT_DESTINATION_MAX_COUNT = 18;
+const THREAT_BASE_SPAWN_DELAY = 1.6;
+const THREAT_DESTINATION_SPAWN_DELAY = 0.42;
 const TERRAIN_TEXTURE_SIZE = 1024;
-const PROP_FILES = [
-  "graves.glb",
-  "large+ruins (1).glb",
-  "large+ruins (2).glb",
-  "large+ruins (3).glb",
-  "large+ruins.glb",
-  "plant (1).glb",
-  "plant (2).glb",
-  "plant (3).glb",
-  "plant.glb",
-  "rocks (1).glb",
-  "rocks (2).glb",
-  "rocks.glb",
-  "ruins (1).glb",
-  "ruins.glb"
-] as const;
-const HERO_PATH_POINTS = [
-  new Vector3(-28, 0, -17),
-  new Vector3(-20, 0, -7),
-  new Vector3(-9, 0, -10),
-  new Vector3(2, 0, -2),
-  new Vector3(12, 0, 3),
-  new Vector3(25, 0, 15)
+const TERRAIN_LENGTH = 150;
+const TERRAIN_WIDTH = 80;
+const TERRAIN_LENGTH_SUBDIVISIONS = 216;
+const TERRAIN_WIDTH_SUBDIVISIONS = 115;
+const LATE_DAY_SUN_DIRECTION = new Vector3(-0.616, -0.391, -0.684).normalize();
+const FALLBACK_HERO_PATH_POINTS = [
+  new Vector3(240.000 * MAKLI_MAP_SCALE, 0, -17.595 * MAKLI_MAP_SCALE),
+  new Vector3(224.906 * MAKLI_MAP_SCALE, 0, -20.038 * MAKLI_MAP_SCALE),
+  new Vector3(209.811 * MAKLI_MAP_SCALE, 0, -18.634 * MAKLI_MAP_SCALE),
+  new Vector3(194.717 * MAKLI_MAP_SCALE, 0, -13.073 * MAKLI_MAP_SCALE),
+  new Vector3(179.623 * MAKLI_MAP_SCALE, 0, -5.524 * MAKLI_MAP_SCALE),
+  new Vector3(164.528 * MAKLI_MAP_SCALE, 0, 0.904 * MAKLI_MAP_SCALE),
+  new Vector3(149.434 * MAKLI_MAP_SCALE, 0, 4.396 * MAKLI_MAP_SCALE),
+  new Vector3(134.340 * MAKLI_MAP_SCALE, 0, 5.607 * MAKLI_MAP_SCALE),
+  new Vector3(119.245 * MAKLI_MAP_SCALE, 0, 6.872 * MAKLI_MAP_SCALE),
+  new Vector3(104.151 * MAKLI_MAP_SCALE, 0, 10.107 * MAKLI_MAP_SCALE),
+  new Vector3(89.057 * MAKLI_MAP_SCALE, 0, 15.071 * MAKLI_MAP_SCALE),
+  new Vector3(73.962 * MAKLI_MAP_SCALE, 0, 19.382 * MAKLI_MAP_SCALE),
+  new Vector3(58.868 * MAKLI_MAP_SCALE, 0, 20.294 * MAKLI_MAP_SCALE),
+  new Vector3(43.774 * MAKLI_MAP_SCALE, 0, 16.830 * MAKLI_MAP_SCALE),
+  new Vector3(28.679 * MAKLI_MAP_SCALE, 0, 10.606 * MAKLI_MAP_SCALE),
+  new Vector3(13.585 * MAKLI_MAP_SCALE, 0, 4.667 * MAKLI_MAP_SCALE),
+  new Vector3(-1.509 * MAKLI_MAP_SCALE, 0, 1.266 * MAKLI_MAP_SCALE),
+  new Vector3(-16.604 * MAKLI_MAP_SCALE, 0, 0.308 * MAKLI_MAP_SCALE),
+  new Vector3(-31.698 * MAKLI_MAP_SCALE, 0, -0.328 * MAKLI_MAP_SCALE),
+  new Vector3(-46.792 * MAKLI_MAP_SCALE, 0, -2.865 * MAKLI_MAP_SCALE),
+  new Vector3(-61.887 * MAKLI_MAP_SCALE, 0, -7.643 * MAKLI_MAP_SCALE),
+  new Vector3(-76.981 * MAKLI_MAP_SCALE, 0, -12.664 * MAKLI_MAP_SCALE),
+  new Vector3(-92.075 * MAKLI_MAP_SCALE, 0, -15.035 * MAKLI_MAP_SCALE),
+  new Vector3(-107.170 * MAKLI_MAP_SCALE, 0, -13.192 * MAKLI_MAP_SCALE),
+  new Vector3(-122.264 * MAKLI_MAP_SCALE, 0, -8.142 * MAKLI_MAP_SCALE),
+  new Vector3(-137.358 * MAKLI_MAP_SCALE, 0, -2.747 * MAKLI_MAP_SCALE),
+  new Vector3(-152.453 * MAKLI_MAP_SCALE, 0, 0.395 * MAKLI_MAP_SCALE),
+  new Vector3(-167.547 * MAKLI_MAP_SCALE, 0, 0.809 * MAKLI_MAP_SCALE),
+  new Vector3(-182.642 * MAKLI_MAP_SCALE, 0, 0.304 * MAKLI_MAP_SCALE),
+  new Vector3(-197.736 * MAKLI_MAP_SCALE, 0, 1.313 * MAKLI_MAP_SCALE),
+  new Vector3(-212.830 * MAKLI_MAP_SCALE, 0, 4.760 * MAKLI_MAP_SCALE),
+  new Vector3(-227.925 * MAKLI_MAP_SCALE, 0, 9.149 * MAKLI_MAP_SCALE),
+  new Vector3(-240.000 * MAKLI_MAP_SCALE, 0, 11.404 * MAKLI_MAP_SCALE)
 ] as const;
 
 DracoCompression.Configuration = {
@@ -104,20 +126,34 @@ type Threat = {
   radius: number;
 };
 
-type PropPlacement = {
-  file: string;
-  category: "graves" | "plant" | "rocks" | "ruins";
-  position: Vector3;
-  rotationY: number;
-  scale: number;
-  blocker: PropBlocker;
-};
-
 type PropBlocker = {
   center: Vector2;
   halfSize: Vector2;
   rotationY: number;
   radius: number;
+};
+
+type MakliAtlasMetadata = {
+  map?: {
+    length?: number;
+    width?: number;
+    terrainTriangles?: number;
+    pathHalfWidth?: number;
+  };
+  atlas?: {
+    regions?: Array<{ object?: string; type?: string; uMin?: number; vMin?: number; uMax?: number; vMax?: number }>;
+  };
+  props?: {
+    instancingMode?: string;
+    groups?: Record<string, MakliPropMetadata[]>;
+  };
+};
+
+type MakliPropMetadata = {
+  object?: string;
+  translation?: number[];
+  rotationEuler?: number[];
+  finalFootprintSize?: number;
 };
 
 function bySelector<T extends Element>(selector: string): T {
@@ -262,8 +298,13 @@ function lerpAngleDegrees(from: number, to: number, amount: number): number {
   return from + (delta * 180 / Math.PI) * amount;
 }
 
-function terrainHeightAt(_x: number, _z: number): number {
-  return 0;
+function terrainHeightAt(x: number, z: number): number {
+  return (
+    (fractalNoise(x * 0.006, z * 0.006) - 0.5) * 2.4 +
+    (fractalNoise(x * 0.018 + 43.7, z * 0.018 - 18.2) - 0.5) * 0.9 +
+    (fractalNoise(x * 0.045 - 12.4, z * 0.045 + 33.1) - 0.5) * 0.3 +
+    (fractalNoise(x * 0.11 + 7.3, z * 0.11 - 21.5) - 0.5) * 0.08
+  );
 }
 
 class MusicLoop {
@@ -384,6 +425,7 @@ class MenuBackground {
 
 class ExplorationMode {
   private root: TransformNode;
+  private mapRoot: TransformNode;
   private camera: FreeCamera;
   private playerRoot: TransformNode;
   private visualRoot: TransformNode;
@@ -400,27 +442,33 @@ class ExplorationMode {
   private cameraPitch = 38;
   private cameraRadius = 21;
   private visualYaw = 0;
+  private sun: DirectionalLight;
   private pathTime = 0;
-  private pathForward = true;
+  private pathComplete = false;
+  private heroPathPoints: Vector3[] = FALLBACK_HERO_PATH_POINTS.map((point) => point.clone());
   private spawnTimer = 0;
   private drawingStartedAt = 0;
   private drawLength = 0;
   private pathSegmentLengths: number[] = [];
   private pathTotalLength = 0;
   private drawPoints: Vector3[] = [];
-  private propPlacements: PropPlacement[] = [];
   private propBlockers: PropBlocker[] = [];
   private threats: Threat[] = [];
   private drawMesh: Mesh | null = null;
   private drawHaloMesh: Mesh | null = null;
+  private terrainMeshes: Mesh[] = [];
+  private makliAtlasMetadata: MakliAtlasMetadata | null = null;
   private drawMaterial: StandardMaterial;
   private drawHaloMaterial: StandardMaterial;
   private glowLayer: GlowLayer;
   private threatMaterial: StandardMaterial;
+  private terrainAtlasTexture: Texture;
 
   constructor(private scene: Scene, private canvas: HTMLCanvasElement) {
     this.root = new TransformNode("exploreRoot", scene);
     this.root.setEnabled(false);
+    this.mapRoot = new TransformNode("makliMapRoot", scene);
+    this.mapRoot.scaling.setAll(MAKLI_MAP_SCALE);
     this.playerRoot = new TransformNode("playerRoot", scene);
     this.visualRoot = new TransformNode("visualRoot", scene);
     this.modelRoot = new TransformNode("modelRoot", scene);
@@ -446,6 +494,7 @@ class ExplorationMode {
     this.threatMaterial.disableDepthWrite = true;
 
     this.playerRoot.parent = this.root;
+    this.mapRoot.parent = this.root;
     this.visualRoot.parent = this.playerRoot;
     this.modelRoot.parent = this.visualRoot;
     this.drawRoot.parent = this.root;
@@ -456,43 +505,52 @@ class ExplorationMode {
     this.camera.maxZ = 160;
     this.camera.parent = this.root;
 
-    const ambient = new HemisphericLight("ambient", new Vector3(-0.4, 1, 0.55), scene);
-    ambient.intensity = 0.22;
-    ambient.diffuse = new Color3(0.42, 0.38, 0.34);
-    ambient.groundColor = new Color3(0.08, 0.065, 0.045);
+    const ambient = new HemisphericLight("ambient", new Vector3(-0.18, 1, 0.32), scene);
+    ambient.intensity = 0.1;
+    ambient.diffuse = new Color3(0.34, 0.39, 0.47);
+    ambient.groundColor = new Color3(0.15, 0.11, 0.07);
     ambient.parent = this.root;
 
-    const sun = new DirectionalLight("shadowLight", new Vector3(-0.4, -1, -0.35), scene);
-    sun.intensity = 2.0;
-    sun.diffuse = new Color3(1, 0.84, 0.58);
-    sun.position.set(4, 10, 4);
-    sun.shadowMinZ = 1;
-    sun.shadowMaxZ = 55;
-    sun.autoUpdateExtends = true;
+    const sun = new DirectionalLight("shadowLight", LATE_DAY_SUN_DIRECTION.clone(), scene);
+    sun.intensity = 0.96;
+    sun.diffuse = new Color3(1, 0.74, 0.48);
+    sun.specular = new Color3(0.12, 0.08, 0.04);
+    sun.position.copyFrom(LATE_DAY_SUN_DIRECTION.scale(-80));
+    sun.autoUpdateExtends = false;
+    sun.autoCalcShadowZBounds = false;
+    sun.orthoLeft = -18;
+    sun.orthoRight = 18;
+    sun.orthoTop = 18;
+    sun.orthoBottom = -18;
+    sun.shadowMinZ = 0.1;
+    sun.shadowMaxZ = 130;
     sun.parent = this.root;
-    this.shadowGenerator = new ShadowGenerator(2048, sun);
+    sun.includedOnlyMeshes = [];
+    this.shadowGenerator = new ShadowGenerator(1024, sun);
     this.shadowGenerator.useContactHardeningShadow = true;
-    this.shadowGenerator.contactHardeningLightSizeUVRatio = 0.08;
+    this.shadowGenerator.contactHardeningLightSizeUVRatio = 0.14;
     this.shadowGenerator.filteringQuality = ShadowGenerator.QUALITY_HIGH;
     this.shadowGenerator.bias = 0.0006;
     this.shadowGenerator.normalBias = 0.02;
-    this.shadowGenerator.darkness = 0.45;
+    this.shadowGenerator.darkness = 0.24;
+    this.sun = sun;
+    this.terrainAtlasTexture = new Texture(`${MAKLI_MAP_ROOT}${MAKLI_TERRAIN_ATLAS}`, scene, false, false, Texture.TRILINEAR_SAMPLINGMODE);
+    this.terrainAtlasTexture.name = "makliLitAlbedoAtlas";
+    this.terrainAtlasTexture.hasAlpha = false;
 
     this.prepareHeroPath();
-    this.createPropPlacements();
-    this.createTerrain();
     this.bindInput();
+    void this.loadMakliMap();
     void this.loadHero();
-    void this.loadProps();
     this.updateCamera();
   }
 
   private configureScene(): void {
-    this.scene.clearColor = new Color4(0.32, 0.28, 0.22, 1);
-    this.scene.ambientColor = new Color3(0.12, 0.10, 0.08);
+    this.scene.clearColor = new Color4(0.43, 0.35, 0.24, 1);
+    this.scene.ambientColor = new Color3(0.25, 0.19, 0.12);
     this.scene.fogMode = Scene.FOGMODE_NONE;
-    this.scene.imageProcessingConfiguration.exposure = 0.78;
-    this.scene.imageProcessingConfiguration.contrast = 1.38;
+    this.scene.imageProcessingConfiguration.exposure = 0.84;
+    this.scene.imageProcessingConfiguration.contrast = 1.3;
   }
 
   setActive(active: boolean): void {
@@ -574,20 +632,187 @@ class ExplorationMode {
     this.lastPinchDistance = 0;
   }
 
-  private createTerrain(): void {
-    const terrain = MeshBuilder.CreateGround("plainTerrain", { width: 140, height: 140, subdivisions: 16 }, this.scene);
-    const material = new StandardMaterial("plainTerrainMaterial", this.scene);
+  private async loadMakliMap(): Promise<void> {
+    try {
+      const [metadata, result] = await Promise.all([
+        this.loadMakliAtlasMetadata(),
+        SceneLoader.ImportMeshAsync("", MAKLI_MAP_ROOT, MAKLI_MAP_MODEL, this.scene)
+      ]);
+      this.makliAtlasMetadata = metadata;
+
+      for (const node of [...result.transformNodes, ...result.meshes]) {
+        if (!node.parent) node.parent = this.mapRoot;
+      }
+
+      this.terrainMeshes = [];
+      for (const mesh of result.meshes) {
+        if (!(mesh instanceof Mesh)) continue;
+        mesh.parent = mesh.parent ?? this.mapRoot;
+        mesh.isPickable = true;
+        mesh.checkCollisions = true;
+
+        if (this.isTerrainChunk(mesh.name)) {
+          this.configureMakliTerrainMesh(mesh);
+          this.terrainMeshes.push(mesh);
+        } else {
+          this.configureMakliPropMesh(mesh);
+        }
+      }
+
+      this.loadHeroPathFromMap(result.meshes);
+      this.buildPropBlockersFromMetadata(metadata);
+      this.prepareHeroPath();
+      this.logMakliMapInstanceStats(result.meshes);
+    } catch (error) {
+      console.error("Unable to load baked Makli map, using fallback terrain", error);
+      this.createFallbackTerrain();
+    }
+  }
+
+  private async loadMakliAtlasMetadata(): Promise<MakliAtlasMetadata> {
+    const response = await fetch(`${MAKLI_MAP_ROOT}${MAKLI_ATLAS_METADATA}?t=${Date.now()}`);
+    if (!response.ok) throw new Error(`Unable to load ${MAKLI_ATLAS_METADATA}: ${response.status}`);
+    return await response.json() as MakliAtlasMetadata;
+  }
+
+  private isTerrainChunk(name: string): boolean {
+    return /^Terrain_AtlasChunk_0[0-3](?:$|[._])/.test(name);
+  }
+
+  private configureMakliTerrainMesh(mesh: Mesh): void {
+    const material = new StandardMaterial(`${mesh.name}_bakedMaterial`, this.scene);
+    const tint = this.terrainChunkTint(mesh.name);
+    material.diffuseTexture = this.terrainAtlasTexture;
+    material.emissiveTexture = this.terrainAtlasTexture;
+    material.diffuseColor = Color3.Black();
+    material.emissiveColor = new Color3(tint, tint, tint);
+    material.specularColor = Color3.Black();
+    material.roughness = 1;
+    material.disableLighting = true;
+    material.backFaceCulling = false;
+    mesh.material = material;
+    mesh.receiveShadows = false;
+    mesh.alwaysSelectAsActiveMesh = true;
+    material.freeze();
+  }
+
+  private terrainChunkTint(name: string): number {
+    const match = name.match(/Terrain_AtlasChunk_0([0-3])/);
+    if (!match) return 1;
+    return [0.98, 1.03, 1.07, 0.98][Number(match[1])] ?? 1;
+  }
+
+  private configureMakliPropMesh(mesh: Mesh): void {
+    mesh.receiveShadows = true;
+    mesh.visibility = 1;
+    this.sun.includedOnlyMeshes.push(mesh);
+    this.makeMaterialOpaque(mesh.material);
+    this.liftPropMaterial(mesh.material);
+    this.shadowGenerator.addShadowCaster(mesh, true);
+  }
+
+  private buildPropBlockersFromMetadata(metadata: MakliAtlasMetadata): void {
+    const groups = metadata.props?.groups;
+    if (!groups) return;
+    const blockers: PropBlocker[] = [];
+    for (const entries of Object.values(groups)) {
+      for (const entry of entries) {
+        const translation = entry.translation;
+        if (!translation || translation.length < 2) continue;
+        const size = Math.max(1.2, entry.finalFootprintSize ?? 2.5);
+        const half = size * MAKLI_MAP_SCALE * 0.5;
+        blockers.push({
+          center: new Vector2(-translation[0] * MAKLI_MAP_SCALE, -translation[1] * MAKLI_MAP_SCALE),
+          halfSize: new Vector2(half, half),
+          rotationY: entry.rotationEuler?.[2] ?? 0,
+          radius: half * Math.SQRT2
+        });
+      }
+    }
+    this.propBlockers = blockers;
+  }
+
+  private logMakliMapInstanceStats(meshes: readonly unknown[]): void {
+    let instancedMeshes = 0;
+    let thinInstances = 0;
+    let uniqueGeometryIds = 0;
+    const geometryIds = new Set<string>();
+    for (const mesh of meshes) {
+      const maybeMesh = mesh as {
+        geometry?: { uniqueId: number };
+        thinInstanceCount?: number;
+        getClassName?: () => string;
+      };
+      if (maybeMesh.getClassName?.() === "InstancedMesh") instancedMeshes += 1;
+      if (maybeMesh.thinInstanceCount) thinInstances += maybeMesh.thinInstanceCount;
+      if (maybeMesh.geometry) geometryIds.add(String(maybeMesh.geometry.uniqueId));
+    }
+    uniqueGeometryIds = geometryIds.size;
+    console.info(
+      `Makli map loaded: ${this.terrainMeshes.length} terrain chunks, ` +
+      `${uniqueGeometryIds} unique geometries, ${instancedMeshes} instanced meshes, ${thinInstances} thin instances, ` +
+      `atlas regions ${this.makliAtlasMetadata?.atlas?.regions?.length ?? 0}`
+    );
+  }
+
+  private createFallbackTerrain(): void {
+    const lengthSubdivs = TERRAIN_LENGTH_SUBDIVISIONS;
+    const widthSubdivs = TERRAIN_WIDTH_SUBDIVISIONS;
+    const lengthVerts = lengthSubdivs + 1;
+    const widthVerts = widthSubdivs + 1;
+    const totalVerts = lengthVerts * widthVerts;
+
+    const positions = new Float32Array(totalVerts * 3);
+    const uvs = new Float32Array(totalVerts * 2);
+    const indices: number[] = [];
+
+    for (let z = 0; z <= widthSubdivs; z++) {
+      for (let x = 0; x <= lengthSubdivs; x++) {
+        const i = z * lengthVerts + x;
+        const worldX = (x / lengthSubdivs - 0.5) * TERRAIN_LENGTH;
+        const worldZ = (z / widthSubdivs - 0.5) * TERRAIN_WIDTH;
+        positions[i * 3] = worldX;
+        positions[i * 3 + 1] = terrainHeightAt(worldX, worldZ);
+        positions[i * 3 + 2] = worldZ;
+        uvs[i * 2] = x / lengthSubdivs;
+        uvs[i * 2 + 1] = z / widthSubdivs;
+      }
+    }
+
+    for (let z = 0; z < widthSubdivs; z++) {
+      for (let x = 0; x < lengthSubdivs; x++) {
+        const base = z * lengthVerts + x;
+        indices.push(
+          base, base + 1, base + lengthVerts,
+          base + 1, base + lengthVerts + 1, base + lengthVerts
+        );
+      }
+    }
+
+    const terrain = new Mesh("terrain", this.scene);
+    const vertexData = new VertexData();
+    vertexData.positions = positions;
+    vertexData.indices = indices;
+    vertexData.uvs = uvs;
+    const normals = new Float32Array(totalVerts * 3);
+    VertexData.ComputeNormals(positions, indices, normals);
+    vertexData.normals = normals;
+    vertexData.applyToMesh(terrain);
+
+    const material = new StandardMaterial("terrainMaterial", this.scene);
     const { diffuse, normal } = this.createTerrainTextures();
     material.diffuseTexture = diffuse;
     material.bumpTexture = normal;
-    material.diffuseColor = new Color3(0.42, 0.38, 0.32);
-    material.specularColor = new Color3(0.05, 0.045, 0.035);
-    material.roughness = 0.86;
+    material.diffuseColor = new Color3(1, 1, 1);
+    material.specularColor = new Color3(0.06, 0.05, 0.04);
+    material.specularPower = 12;
+    material.roughness = 0.9;
     material.useParallax = true;
-    material.parallaxScaleBias = 0.025;
+    material.parallaxScaleBias = 0.12;
     terrain.material = material;
     terrain.receiveShadows = true;
     terrain.parent = this.root;
+    this.terrainMeshes = [terrain];
   }
 
   private createTerrainTextures(): { diffuse: DynamicTexture; normal: DynamicTexture } {
@@ -600,23 +825,23 @@ class ExplorationMode {
 
     for (let y = 0; y < TERRAIN_TEXTURE_SIZE; y += 1) {
       for (let x = 0; x < TERRAIN_TEXTURE_SIZE; x += 1) {
-        const worldX = (x / TERRAIN_TEXTURE_SIZE - 0.5) * 140;
-        const worldZ = (y / TERRAIN_TEXTURE_SIZE - 0.5) * 140;
+        const worldX = (x / TERRAIN_TEXTURE_SIZE - 0.5) * TERRAIN_LENGTH;
+        const worldZ = (y / TERRAIN_TEXTURE_SIZE - 0.5) * TERRAIN_WIDTH;
         const broad = fractalNoise(worldX * 0.025, worldZ * 0.025);
         const stones = fractalNoise(worldX * 0.12 + 11, worldZ * 0.12 - 5);
         const grit = hashNoise(worldX * 2.1, worldZ * 2.1);
         const pathDistance = this.distanceToHeroPath(new Vector2(worldX, worldZ));
-        const pathWear = clamp(1 - pathDistance / 3.8, 0, 1);
+        const pathWear = clamp(1 - pathDistance / 6.5, 0, 1);
         const rock = clamp((stones - 0.56) * 1.9, 0, 1);
         const dirt = clamp((broad - 0.32) * 1.45 + pathWear * 0.55, 0, 1);
         const sand = clamp(1 - rock * 0.8 - dirt * 0.38, 0, 1);
-        const r = 72 * sand + 64 * dirt + 68 * rock + grit * 7;
-        const g = 62 * sand + 52 * dirt + 62 * rock + grit * 5;
-        const b = 48 * sand + 38 * dirt + 56 * rock + grit * 4;
+        const r = 125 * sand + 95 * dirt + 85 * rock + grit * 7;
+        const g = 100 * sand + 75 * dirt + 72 * rock + grit * 5;
+        const b = 68 * sand + 50 * dirt + 58 * rock + grit * 4;
         const i = (y * TERRAIN_TEXTURE_SIZE + x) * 4;
-        diffuseImage.data[i] = clamp(r + pathWear * 16, 0, 255);
-        diffuseImage.data[i + 1] = clamp(g + pathWear * 10, 0, 255);
-        diffuseImage.data[i + 2] = clamp(b + pathWear * 3, 0, 255);
+        diffuseImage.data[i] = clamp(r + pathWear * 12, 0, 255);
+        diffuseImage.data[i + 1] = clamp(g + pathWear * 8, 0, 255);
+        diffuseImage.data[i + 2] = clamp(b + pathWear * 2, 0, 255);
         diffuseImage.data[i + 3] = 255;
 
         const hL = fractalNoise((worldX - 0.35) * 0.12, worldZ * 0.12);
@@ -626,7 +851,8 @@ class ExplorationMode {
         normalImage.data[i] = clamp(128 - (hR - hL) * 185, 0, 255);
         normalImage.data[i + 1] = clamp(128 - (hU - hD) * 185, 0, 255);
         normalImage.data[i + 2] = 225;
-        normalImage.data[i + 3] = 255;
+        const height = fractalNoise(worldX * 0.08, worldZ * 0.08);
+        normalImage.data[i + 3] = clamp(height * 255, 0, 255);
       }
     }
 
@@ -634,184 +860,112 @@ class ExplorationMode {
     normalContext.putImageData(normalImage, 0, 0);
     diffuse.update(false);
     normal.update(false);
-    diffuse.wrapU = diffuse.wrapV = Texture.WRAP_ADDRESSMODE;
-    normal.wrapU = normal.wrapV = Texture.WRAP_ADDRESSMODE;
-    diffuse.uScale = diffuse.vScale = 3.5;
-    normal.uScale = normal.vScale = 3.5;
+    diffuse.uScale = diffuse.vScale = 1;
+    normal.uScale = normal.vScale = 1;
     return { diffuse, normal };
   }
 
   private prepareHeroPath(): void {
+    for (const point of this.heroPathPoints) {
+      point.y = this.groundHeightAt(point.x, point.z);
+    }
     this.pathSegmentLengths = [];
     this.pathTotalLength = 0;
-    for (let i = 0; i < HERO_PATH_POINTS.length - 1; i += 1) {
-      const length = distanceVec3(HERO_PATH_POINTS[i], HERO_PATH_POINTS[i + 1]);
+    for (let i = 0; i < this.heroPathPoints.length - 1; i += 1) {
+      const length = distanceVec3(this.heroPathPoints[i], this.heroPathPoints[i + 1]);
       this.pathSegmentLengths.push(length);
       this.pathTotalLength += length;
     }
   }
 
-  private createPropPlacements(): void {
-    const placements: PropPlacement[] = [];
-    const instancesPerFile = 3;
-    for (const file of PROP_FILES) {
-      const category = this.propCategory(file);
-      const profile = this.propProfile(category);
-      const scale = this.propScale(file);
-      for (let i = 0; i < instancesPerFile; i += 1) {
-        const placement = this.placeSingleProp(file, category, profile, scale);
-        if (placement) placements.push(placement);
+  private loadHeroPathFromMap(meshes: readonly unknown[]): void {
+    const pathMeshes = meshes.filter((mesh): mesh is Mesh => mesh instanceof Mesh && (() => {
+      const names: string[] = [];
+      for (let node: { name: string; parent: unknown } | null = mesh; node; node = this.parentNodeWithName(node.parent)) {
+        names.push(node.name);
       }
+      return names.some((name) => name.includes("Walkable_Path_Centerline_Debug"));
+    })());
+
+    const points = pathMeshes.flatMap((mesh) => this.extractPathPointsFromMesh(mesh));
+    if (points.length < 2) {
+      const debugNode = this.scene.getTransformNodeByName("Walkable_Path_Centerline_Debug");
+      if (debugNode) {
+        console.warn("Walkable_Path_Centerline_Debug is present but has no exported mesh vertices; using fallback Yusuf path.");
+      }
+      return;
     }
-    this.propPlacements = placements;
-    this.propBlockers = placements.map((p) => p.blocker);
+
+    this.heroPathPoints = this.orderPathPoints(points);
+    console.info(`Loaded Yusuf path from Walkable_Path_Centerline_Debug with ${this.heroPathPoints.length} points.`);
   }
 
-  private placeSingleProp(file: string, category: PropPlacement["category"], profile: ReturnType<ExplorationMode["propProfile"]>, scale: number): PropPlacement | null {
-    const halfSize = new Vector2(profile.halfX * scale, profile.halfZ * scale);
-    const radius = Math.hypot(halfSize.x, halfSize.y);
-    for (let attempt = 0; attempt < 900; attempt += 1) {
-      const center = this.randomPointNearPath(radius);
-      const rotationY = category === "ruins"
-        ? Math.floor(Math.random() * 4) * Math.PI / 2
-        : Math.random() * Math.PI * 2;
-      const blocker: PropBlocker = { center, halfSize, rotationY, radius };
-      if (!this.canPlaceProp(blocker, profile.clearance)) continue;
-      return {
-        file,
-        category,
-        position: new Vector3(center.x, this.propBaseY(file), center.y),
-        rotationY,
-        scale,
-        blocker
-      };
+  private parentNodeWithName(parent: unknown): { name: string; parent: unknown } | null {
+    if (parent && typeof parent === "object" && "name" in parent && typeof parent.name === "string") {
+      return parent as { name: string; parent: unknown };
     }
     return null;
   }
 
-  private propScale(file: string): number {
-    if (this.propCategory(file) === "graves") return 1.125;
-    return file.includes("large+ruins") ? 14 : 4.5;
-  }
-
-  private propBaseY(file: string): number {
-    if (file === "plant (1).glb" || file === "plant (2).glb" || file === "plant (3).glb") return -0.45;
-    return file.includes("large+ruins") ? -0.24 : -0.08;
-  }
-
-  private randomPointNearPath(radius: number): Vector2 {
-    const segmentIndex = Math.floor(Math.random() * (HERO_PATH_POINTS.length - 1));
-    const start = HERO_PATH_POINTS[segmentIndex];
-    const end = HERO_PATH_POINTS[segmentIndex + 1];
-    const t = Math.random();
-    const x = lerp(start.x, end.x, t);
-    const z = lerp(start.z, end.z, t);
-    const dx = end.x - start.x;
-    const dz = end.z - start.z;
-    const length = Math.hypot(dx, dz) || 1;
-    const side = Math.random() < 0.5 ? -1 : 1;
-    const offset = HERO_PATH_CLEARANCE + radius + 0.5 + Math.random() * 15;
-    const alongJitter = (Math.random() - 0.5) * 4.5;
-    return new Vector2(
-      x + (-dz / length) * offset * side + (dx / length) * alongJitter,
-      z + (dx / length) * offset * side + (dz / length) * alongJitter
-    );
-  }
-
-  private propCategory(file: string): PropPlacement["category"] {
-    if (file.includes("plant")) return "plant";
-    if (file.includes("rocks")) return "rocks";
-    if (file.includes("graves")) return "graves";
-    return "ruins";
-  }
-
-  private propProfile(category: PropPlacement["category"]): { halfX: number; halfZ: number; scaleMin: number; scaleMax: number; clearance: number } {
-    switch (category) {
-      case "plant":
-        return { halfX: 0.24, halfZ: 0.24, scaleMin: 1, scaleMax: 1, clearance: 0.08 };
-      case "rocks":
-        return { halfX: 0.45, halfZ: 0.38, scaleMin: 1, scaleMax: 1, clearance: 0.12 };
-      case "graves":
-        return { halfX: 0.56, halfZ: 0.42, scaleMin: 1, scaleMax: 1, clearance: 0.16 };
-      case "ruins":
-        return { halfX: 0.62, halfZ: 0.48, scaleMin: 1, scaleMax: 1, clearance: 0.22 };
+  private extractPathPointsFromMesh(mesh: Mesh): Vector3[] {
+    const positions = mesh.getVerticesData("position");
+    if (!positions || positions.length < 6) return [];
+    mesh.computeWorldMatrix(true);
+    const worldMatrix = mesh.getWorldMatrix();
+    const points: Vector3[] = [];
+    for (let i = 0; i < positions.length; i += 3) {
+      const point = Vector3.TransformCoordinates(new Vector3(positions[i], positions[i + 1], positions[i + 2]), worldMatrix);
+      if (points.length === 0 || distanceVec3(points[points.length - 1], point) > 0.03) points.push(point);
     }
+    return points;
   }
 
-  private canPlaceProp(blocker: PropBlocker, clearance: number): boolean {
-    for (let i = 0; i < HERO_PATH_POINTS.length - 1; i += 1) {
-      if (distancePointToSegment2D(blocker.center, HERO_PATH_POINTS[i], HERO_PATH_POINTS[i + 1]) < HERO_PATH_CLEARANCE + blocker.radius) {
-        return false;
+  private orderPathPoints(points: Vector3[]): Vector3[] {
+    const remaining = points.map((point) => point.clone());
+    const startIndex = remaining.reduce((best, point, index) => point.x < remaining[best].x ? index : best, 0);
+    const ordered = [remaining.splice(startIndex, 1)[0]];
+
+    while (remaining.length > 0) {
+      const last = ordered[ordered.length - 1];
+      let nearestIndex = 0;
+      let nearestDistance = distanceVec3(last, remaining[0]);
+      for (let i = 1; i < remaining.length; i += 1) {
+        const distance = distanceVec3(last, remaining[i]);
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearestIndex = i;
+        }
       }
+      ordered.push(remaining.splice(nearestIndex, 1)[0]);
     }
-    for (const existing of this.propBlockers) {
-      if (distanceVec2(blocker.center, existing.center) < blocker.radius + existing.radius + clearance) return false;
-    }
-    this.propBlockers.push(blocker);
-    return true;
+
+    return ordered;
   }
 
   private distanceToHeroPath(point: Vector2): number {
     let distance = Number.POSITIVE_INFINITY;
-    for (let i = 0; i < HERO_PATH_POINTS.length - 1; i += 1) {
-      distance = Math.min(distance, distancePointToSegment2D(point, HERO_PATH_POINTS[i], HERO_PATH_POINTS[i + 1]));
+    for (let i = 0; i < this.heroPathPoints.length - 1; i += 1) {
+      distance = Math.min(distance, distancePointToSegment2D(point, this.heroPathPoints[i], this.heroPathPoints[i + 1]));
     }
     return distance;
   }
 
-  private async loadProps(): Promise<void> {
-    try {
-      await DracoCompression.Default.whenReadyAsync();
-      const containers = new Map<string, Awaited<ReturnType<typeof SceneLoader.LoadAssetContainerAsync>>>();
-      await Promise.all(PROP_FILES.map(async (file) => {
-        containers.set(file, await SceneLoader.LoadAssetContainerAsync(PROP_ROOT, file, this.scene));
-      }));
-
-      this.propPlacements.forEach((placement, index) => {
-        const container = containers.get(placement.file);
-        if (!container) return;
-        const root = new TransformNode(`prop_${placement.category}_${index}`, this.scene);
-        root.position.copyFrom(placement.position);
-        root.rotation.y = placement.rotationY;
-        root.scaling.setAll(placement.scale);
-        root.parent = this.root;
-        const entries = container.instantiateModelsToScene((name) => `${root.name}_${name}`, false);
-        for (const node of entries.rootNodes) {
-          node.parent = root;
-          if (node instanceof Mesh) this.configurePropMesh(node);
-          for (const mesh of node.getChildMeshes(false)) {
-            if (mesh instanceof Mesh) this.configurePropMesh(mesh);
-          }
-        }
-      });
-    } catch (error) {
-      console.error("Unable to load explore props", error);
-    }
-  }
-
-  private configurePropMesh(mesh: Mesh): void {
-    mesh.receiveShadows = true;
-    mesh.visibility = 1;
-    this.makeMaterialOpaque(mesh.material);
-    this.shadowGenerator.addShadowCaster(mesh, true);
-  }
-
   private updateHeroPath(dt: number): void {
-    this.pathTime += dt * WALK_SPEED * (this.pathForward ? 1 : -1);
+    if (this.pathComplete) return;
+    this.pathTime += dt * WALK_SPEED;
     if (this.pathTime >= this.pathTotalLength) {
       this.pathTime = this.pathTotalLength;
-      this.pathForward = false;
-    } else if (this.pathTime <= 0) {
-      this.pathTime = 0;
-      this.pathForward = true;
+      this.pathComplete = true;
     }
 
     const position = this.pathPositionAt(this.pathTime);
+    position.y = this.groundHeightAt(position.x, position.z);
     const tangent = normalizeVec3(subVec3(
-      this.pathPositionAt(this.pathTime + (this.pathForward ? 0.12 : -0.12)),
+      this.pathPositionAt(Math.min(this.pathTotalLength, this.pathTime + 0.12)),
       this.pathPositionAt(this.pathTime)
     ));
     this.playerRoot.position.copyFrom(position);
+    this.sun.position.copyFrom(position.subtract(LATE_DAY_SUN_DIRECTION.scale(80)));
     const yaw = Math.atan2(tangent.x, tangent.z) * 180 / Math.PI;
     this.visualYaw = lerpAngleDegrees(this.visualYaw, yaw, Math.min(1, dt * 12));
     this.visualRoot.rotation.set(0, (this.visualYaw + MODEL_FORWARD_OFFSET) * Math.PI / 180, 0);
@@ -829,19 +983,19 @@ class ExplorationMode {
       }
       remaining -= segmentLength;
     }
-    return HERO_PATH_POINTS[HERO_PATH_POINTS.length - 1].clone();
+    return this.heroPathPoints[this.heroPathPoints.length - 1].clone();
   }
 
   private catmullRomPoint(segmentIndex: number, t: number): Vector3 {
-    const p0 = HERO_PATH_POINTS[Math.max(0, segmentIndex - 1)];
-    const p1 = HERO_PATH_POINTS[segmentIndex];
-    const p2 = HERO_PATH_POINTS[Math.min(HERO_PATH_POINTS.length - 1, segmentIndex + 1)];
-    const p3 = HERO_PATH_POINTS[Math.min(HERO_PATH_POINTS.length - 1, segmentIndex + 2)];
+    const p0 = this.heroPathPoints[Math.max(0, segmentIndex - 1)];
+    const p1 = this.heroPathPoints[segmentIndex];
+    const p2 = this.heroPathPoints[Math.min(this.heroPathPoints.length - 1, segmentIndex + 1)];
+    const p3 = this.heroPathPoints[Math.min(this.heroPathPoints.length - 1, segmentIndex + 2)];
     const t2 = t * t;
     const t3 = t2 * t;
     return new Vector3(
       0.5 * ((2 * p1.x) + (-p0.x + p2.x) * t + (2 * p0.x - 5 * p1.x + 4 * p2.x - p3.x) * t2 + (-p0.x + 3 * p1.x - 3 * p2.x + p3.x) * t3),
-      terrainHeightAt(0, 0),
+      0.5 * ((2 * p1.y) + (-p0.y + p2.y) * t + (2 * p0.y - 5 * p1.y + 4 * p2.y - p3.y) * t2 + (-p0.y + 3 * p1.y - 3 * p2.y + p3.y) * t3),
       0.5 * ((2 * p1.z) + (-p0.z + p2.z) * t + (2 * p0.z - 5 * p1.z + 4 * p2.z - p3.z) * t2 + (-p0.z + 3 * p1.z - 3 * p2.z + p3.z) * t3)
     );
   }
@@ -850,14 +1004,14 @@ class ExplorationMode {
     this.clearDrawing();
     this.drawingStartedAt = performance.now();
     this.drawLength = 0;
-    point.y = DRAW_CORE_Y;
+    point.y += DRAW_Y_OFFSET;
     this.drawPoints = [point];
     this.updateDrawPreviewMarker(point);
   }
 
   private appendDrawPoint(point: Vector3): void {
     if (this.drawPoints.length === 0) return;
-    point.y = DRAW_CORE_Y;
+    point.y += DRAW_Y_OFFSET;
     const last = this.drawPoints[this.drawPoints.length - 1];
     const segmentLength = distanceVec3(last, point);
     if (segmentLength < 0.18) return;
@@ -865,7 +1019,6 @@ class ExplorationMode {
     const clampedPoint = segmentLength > remaining
       ? addVec3(last, scaleVec3(normalizeVec3(subVec3(point, last)), remaining))
       : point;
-    clampedPoint.y = DRAW_CORE_Y;
     this.drawPoints.push(clampedPoint);
     this.drawLength += Math.min(segmentLength, remaining);
     this.updateDrawMesh(false);
@@ -894,8 +1047,8 @@ class ExplorationMode {
   private updateDrawMesh(close: boolean): void {
     const points = close && this.drawPoints.length > 2 ? [...this.drawPoints, this.drawPoints[0]] : this.drawPoints;
     if (points.length < 2) return;
-    this.drawHaloMesh = this.updateStrokeMesh(this.drawHaloMesh, "paintedGroundLineHalo", points, DRAW_HALO_HALF_WIDTH, DRAW_HALO_Y, this.drawHaloMaterial);
-    this.drawMesh = this.updateStrokeMesh(this.drawMesh, "paintedGroundLine", points, DRAW_CORE_HALF_WIDTH, DRAW_CORE_Y, this.drawMaterial);
+    this.drawHaloMesh = this.updateStrokeMesh(this.drawHaloMesh, "paintedGroundLineHalo", points, DRAW_HALO_HALF_WIDTH, this.drawHaloMaterial);
+    this.drawMesh = this.updateStrokeMesh(this.drawMesh, "paintedGroundLine", points, DRAW_CORE_HALF_WIDTH, this.drawMaterial);
   }
 
   private updateDrawPreviewMarker(point: Vector3): void {
@@ -903,13 +1056,13 @@ class ExplorationMode {
     this.drawMesh?.dispose();
     this.drawHaloMesh = MeshBuilder.CreateDisc("paintedGroundLineHalo", { radius: 0.25, tessellation: 32 }, this.scene);
     this.drawHaloMesh.rotation.x = Math.PI / 2;
-    this.drawHaloMesh.position.set(point.x, DRAW_HALO_Y, point.z);
+    this.drawHaloMesh.position.set(point.x, point.y - 0.02, point.z);
     this.drawHaloMesh.material = this.drawHaloMaterial;
     this.drawHaloMesh.parent = this.drawRoot;
     this.glowLayer.addIncludedOnlyMesh(this.drawHaloMesh);
     this.drawMesh = MeshBuilder.CreateDisc("paintedGroundLine", { radius: 0.1, tessellation: 32 }, this.scene);
     this.drawMesh.rotation.x = Math.PI / 2;
-    this.drawMesh.position.set(point.x, DRAW_CORE_Y, point.z);
+    this.drawMesh.position.set(point.x, point.y + 0.02, point.z);
     this.drawMesh.material = this.drawMaterial;
     this.drawMesh.parent = this.drawRoot;
     this.glowLayer.addIncludedOnlyMesh(this.drawMesh);
@@ -920,7 +1073,6 @@ class ExplorationMode {
     name: string,
     points: Vector3[],
     halfWidth: number,
-    y: number,
     material: StandardMaterial,
     glow = true
   ): Mesh {
@@ -928,7 +1080,7 @@ class ExplorationMode {
     strokeMesh.position.set(0, 0, 0);
     strokeMesh.rotation.set(0, 0, 0);
     strokeMesh.scaling.set(1, 1, 1);
-    const vertexData = this.createStrokeVertexData(points, halfWidth, y);
+    const vertexData = this.createStrokeVertexData(points, halfWidth);
     vertexData.applyToMesh(strokeMesh, true);
     strokeMesh.material = material;
     strokeMesh.parent = this.drawRoot;
@@ -936,7 +1088,7 @@ class ExplorationMode {
     return strokeMesh;
   }
 
-  private createStrokeVertexData(points: Vector3[], halfWidth: number, y: number): VertexData {
+  private createStrokeVertexData(points: Vector3[], halfWidth: number): VertexData {
     const positions: number[] = [];
     const indices: number[] = [];
     for (let i = 0; i < points.length; i += 1) {
@@ -945,8 +1097,8 @@ class ExplorationMode {
       const direction = normalizeVec3(subVec3(next, previous));
       const side = new Vector3(-direction.z, 0, direction.x);
       positions.push(
-        points[i].x + side.x * halfWidth, y, points[i].z + side.z * halfWidth,
-        points[i].x - side.x * halfWidth, y, points[i].z - side.z * halfWidth
+        points[i].x + side.x * halfWidth, points[i].y, points[i].z + side.z * halfWidth,
+        points[i].x - side.x * halfWidth, points[i].y, points[i].z - side.z * halfWidth
       );
       if (i < points.length - 1) {
         const base = i * 2;
@@ -971,9 +1123,12 @@ class ExplorationMode {
 
   private updateThreats(dt: number): void {
     this.spawnTimer -= dt;
-    if (this.spawnTimer <= 0 && this.threats.length < 10) {
+    const progress = this.pathProgress();
+    const maxThreats = Math.round(lerp(THREAT_BASE_MAX_COUNT, THREAT_DESTINATION_MAX_COUNT, progress));
+    if (this.spawnTimer <= 0 && this.threats.length < maxThreats) {
       this.spawnThreat();
-      this.spawnTimer = 1.3 + Math.random() * 1.8;
+      const spawnDelay = lerp(THREAT_BASE_SPAWN_DELAY, THREAT_DESTINATION_SPAWN_DELAY, progress);
+      this.spawnTimer = spawnDelay * (0.72 + Math.random() * 0.56);
     }
 
     const heroPosition = this.playerRoot.position;
@@ -984,7 +1139,7 @@ class ExplorationMode {
       const steering = addVec3(normalizeVec3(toHero), this.propAvoidance(threat.root.position, threat.radius));
       threat.velocity = scaleVec3(normalizeVec3(steering), THREAT_SPEED);
       const next = addVec3(threat.root.position, scaleVec3(threat.velocity, dt));
-      next.y = 0.75;
+      next.y = this.groundHeightAt(next.x, next.z) + 0.75;
       threat.root.position.copyFrom(next);
       threat.spin += dt * 210;
       threat.root.rotation.y = threat.spin * Math.PI / 180;
@@ -1028,12 +1183,32 @@ class ExplorationMode {
     );
   }
 
+  private pathProgress(): number {
+    return this.pathTotalLength > 0 ? clamp(this.pathTime / this.pathTotalLength, 0, 1) : 0;
+  }
+
   private spawnThreat(): void {
     const heroPosition = this.playerRoot.position;
-    const angle = Math.random() * Math.PI * 2;
-    const distance = 25 + Math.random() * 25;
+    const progress = this.pathProgress();
+    const lookAheadDistance = lerp(9, 18, progress) + Math.random() * 9;
+    const pathTarget = this.pathPositionAt(Math.min(this.pathTotalLength, this.pathTime + lookAheadDistance));
+    let toTarget = normalizeVec3(subVec3(pathTarget, heroPosition));
+    if (lengthVec3(toTarget) < 0.001) toTarget = new Vector3(Math.cos(this.visualYaw * Math.PI / 180), 0, Math.sin(this.visualYaw * Math.PI / 180));
+    const pathSide = Math.random() < 0.5 ? -1 : 1;
+    const sideOffset = lerp(9, 5.5, progress) + Math.random() * lerp(12, 7, progress);
+    const forwardJitter = (Math.random() - 0.35) * 6;
+    const side = new Vector3(-toTarget.z, 0, toTarget.x);
+    const spawnCenter = addVec3(pathTarget, addVec3(scaleVec3(side, sideOffset * pathSide), scaleVec3(toTarget, forwardJitter)));
+    const distanceFromHero = distanceVec3(spawnCenter, heroPosition);
+    const minDistance = lerp(14, 8, progress);
+    const awayFromHero = normalizeVec3(subVec3(spawnCenter, heroPosition));
+    const spawnPosition = distanceFromHero < minDistance && lengthVec3(awayFromHero) > 0.001
+      ? addVec3(heroPosition, scaleVec3(awayFromHero, minDistance))
+      : spawnCenter;
+    const spawnX = spawnPosition.x;
+    const spawnZ = spawnPosition.z;
     const root = new TransformNode("threatVortex", this.scene);
-    root.position.set(heroPosition.x + Math.cos(angle) * distance, 0.75, heroPosition.z + Math.sin(angle) * distance);
+    root.position.set(spawnX, this.groundHeightAt(spawnX, spawnZ) + 0.75, spawnZ);
     root.parent = this.root;
 
     const particles: Mesh[] = [];
@@ -1099,6 +1274,7 @@ class ExplorationMode {
         if (mesh instanceof Mesh) {
           mesh.receiveShadows = true;
           this.makeHeroMeshReadable(mesh);
+          this.sun.includedOnlyMeshes.push(mesh);
           this.shadowGenerator.addShadowCaster(mesh, true);
         }
       }
@@ -1109,6 +1285,7 @@ class ExplorationMode {
       fallback.position.y = 0.9;
       fallback.material = makeMaterial(this.scene, "fallbackHeroMaterial", new Color3(0.18, 0.23, 0.28));
       fallback.parent = this.modelRoot;
+      this.sun.includedOnlyMeshes.push(fallback);
       this.shadowGenerator.addShadowCaster(fallback);
     }
   }
@@ -1157,6 +1334,45 @@ class ExplorationMode {
     editableMaterial.transparencyMode = Material.MATERIAL_OPAQUE;
   }
 
+  private liftPropMaterial(material: Mesh["material"]): void {
+    const editableMaterial = material as {
+      diffuseTexture?: unknown;
+      albedoTexture?: unknown;
+      emissiveTexture?: unknown;
+      emissiveColor?: Color3;
+      diffuseColor?: Color3;
+      albedoColor?: Color3;
+      specularColor?: Color3;
+      specularPower?: number;
+      specularIntensity?: number;
+      roughness?: number;
+      metallic?: number;
+      environmentIntensity?: number;
+      directIntensity?: number;
+    } | null;
+    if (!editableMaterial) return;
+
+    const hasBaseTexture = Boolean(editableMaterial.albedoTexture ?? editableMaterial.diffuseTexture);
+    editableMaterial.emissiveTexture = undefined;
+    editableMaterial.emissiveColor = new Color3(0.018, 0.013, 0.008);
+    editableMaterial.specularColor = Color3.Black();
+    editableMaterial.specularPower = 8;
+    editableMaterial.specularIntensity = 0.03;
+    editableMaterial.roughness = 0.94;
+    editableMaterial.metallic = 0;
+    editableMaterial.environmentIntensity = 0.18;
+    editableMaterial.directIntensity = 1.15;
+
+    if (hasBaseTexture) {
+      if (editableMaterial.diffuseColor) editableMaterial.diffuseColor = Color3.White();
+      if (editableMaterial.albedoColor) editableMaterial.albedoColor = Color3.White();
+      return;
+    }
+
+    if (editableMaterial.diffuseColor) editableMaterial.diffuseColor = new Color3(0.46, 0.37, 0.25);
+    if (editableMaterial.albedoColor) editableMaterial.albedoColor = new Color3(0.46, 0.37, 0.25);
+  }
+
   private playWalkAnimation(animationGroups: AnimationGroup[]): void {
     const group = animationGroups.find((animation) => {
       const name = animation.name.toLowerCase();
@@ -1165,21 +1381,27 @@ class ExplorationMode {
 
     if (group) {
       if (group.name !== "NlaTrack.004") console.info(`Using animation track "${group.name}" for "NlaTrack.004"`);
-      group.start(true, 1);
+      group.start(true, 1.56);
     } else {
       console.error("Missing Yusuf walk animation", animationGroups.map((animation) => animation.name));
     }
   }
 
+  private groundHeightAt(x: number, z: number): number {
+    if (this.terrainMeshes.length === 0) return terrainHeightAt(x, z);
+    const ray = new Ray(new Vector3(x, 80, z), new Vector3(0, -1, 0), 180);
+    const result = this.scene.pickWithRay(ray, (mesh) => this.terrainMeshes.includes(mesh as Mesh));
+    return result?.hit && result.pickedPoint ? result.pickedPoint.y : terrainHeightAt(x, z);
+  }
+
   private pickGroundPoint(clientX: number, clientY: number): Vector3 | null {
+    if (this.terrainMeshes.length === 0) return null;
     const rect = this.canvas.getBoundingClientRect();
     const x = clientX - rect.left;
     const y = clientY - rect.top;
-    const ray = this.scene.createPickingRay(x, y, Matrix.Identity(), this.camera);
-    if (Math.abs(ray.direction.y) < 0.0001) return null;
-    const t = -ray.origin.y / ray.direction.y;
-    if (t < 0) return null;
-    return addVec3(ray.origin, scaleVec3(ray.direction, t));
+    const pickingResult = this.scene.pick(x, y, (mesh) => this.terrainMeshes.includes(mesh as Mesh));
+    if (!pickingResult?.hit || !pickingResult.pickedPoint) return null;
+    return pickingResult.pickedPoint.clone();
   }
 
   private updatePinch(event: PointerEvent): void {
@@ -1226,7 +1448,7 @@ class ExplorationMode {
   }
 
   private zoomBy(delta: number): void {
-    this.cameraRadius = Math.min(34, Math.max(10, this.cameraRadius + delta));
+    this.cameraRadius = Math.min(26, Math.max(10, this.cameraRadius + delta));
   }
 
   private rotateCamera(delta: number): void {
