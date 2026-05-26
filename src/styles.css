@@ -154,6 +154,42 @@ h2 {
   pointer-events: none;
 }
 
+.hud-left {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hearts-container {
+  display: flex;
+  gap: 4px;
+  padding: 8px 12px;
+  border: 1px solid rgba(247, 239, 224, 0.18);
+  border-radius: 6px;
+  background: rgba(4, 5, 7, 0.64);
+}
+
+.heart {
+  font-size: 22px;
+  color: #d94040;
+  transition: color 0.3s ease, transform 0.3s ease, opacity 0.3s ease;
+}
+
+.heart.lost {
+  color: rgba(255, 255, 255, 0.12);
+  transform: scale(0.75);
+}
+
+.heart.hit {
+  animation: heart-flash 0.45s ease;
+}
+
+@keyframes heart-flash {
+  0% { transform: scale(1); }
+  30% { transform: scale(1.5); color: #fff; }
+  100% { transform: scale(0.75); }
+}
+
 .mode-label {
   min-width: 132px;
   padding: 10px 12px;
@@ -284,6 +320,11 @@ h2 {
   .hud {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .hud-left {
+    align-items: center;
+    justify-content: space-between;
   }
 
   .menu-actions {

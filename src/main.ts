@@ -9,6 +9,7 @@ import { GlowLayer } from "@babylonjs/core/Layers/glowLayer";
 import { SceneLoader } from "@babylonjs/core/Loading/sceneLoader";
 import { Material } from "@babylonjs/core/Materials/material";
 import { StandardMaterial } from "@babylonjs/core/Materials/standardMaterial";
+import { ShaderMaterial } from "@babylonjs/core/Materials/shaderMaterial";
 import { DynamicTexture } from "@babylonjs/core/Materials/Textures/dynamicTexture";
 import { Texture } from "@babylonjs/core/Materials/Textures/texture";
 import { Color3, Color4 } from "@babylonjs/core/Maths/math.color";
@@ -18,7 +19,9 @@ import { MeshBuilder } from "@babylonjs/core/Meshes/meshBuilder";
 import { VertexData } from "@babylonjs/core/Meshes/mesh.vertexData";
 import { TransformNode } from "@babylonjs/core/Meshes/transformNode";
 import { Scene } from "@babylonjs/core/scene";
+import { ShaderStore } from "@babylonjs/core/Engines/shaderStore";
 import { DracoCompression } from "@babylonjs/core/Meshes/Compression/dracoCompression";
+import "@babylonjs/core/Meshes/thinInstanceMesh";
 import "@babylonjs/loaders/glTF";
 import "./styles.css";
 
@@ -39,7 +42,7 @@ const DRAW_MAX_SECONDS = 3;
 const DRAW_Y_OFFSET = 0.05;
 const DRAW_CORE_HALF_WIDTH = 0.075;
 const DRAW_HALO_HALF_WIDTH = 0.22;
-const THREAT_SPEED = 1.18;
+const THREAT_SPEED = 2.4;
 const THREAT_AVOIDANCE_RANGE = 2.8;
 const THREAT_BASE_MAX_COUNT = 8;
 const THREAT_DESTINATION_MAX_COUNT = 18;
@@ -50,6 +53,18 @@ const TERRAIN_LENGTH = 150;
 const TERRAIN_WIDTH = 80;
 const TERRAIN_LENGTH_SUBDIVISIONS = 216;
 const TERRAIN_WIDTH_SUBDIVISIONS = 115;
+const GRASS_PATCH_SIZE = 8;
+const GRASS_WIND_STRENGTH = 0.05;
+const GRASS_WIND_FREQUENCY = 1.2;
+const GRASS_DENSITY_NOISE_SCALE = 0.06;
+const GRASS_DENSITY_THRESHOLD = 0.18;
+const GRASS_MIN_ELEVATION = -0.45;
+const GRASS_CLUMP_RADIUS = 0.42;
+const GRASS_MIN_CLUMPS_PER_PATCH = 10;
+const GRASS_MAX_CLUMPS_PER_PATCH = 13;
+const GRASS_PATHSIDE_BONUS_RADIUS = 16;
+const GRASS_MIN_BLADES_PER_CLUMP = 20;
+const GRASS_MAX_BLADES_PER_CLUMP = 45;
 const LATE_DAY_SUN_DIRECTION = new Vector3(-0.616, -0.391, -0.684).normalize();
 const FALLBACK_HERO_PATH_POINTS = [
   new Vector3(240.000 * MAKLI_MAP_SCALE, 0, -17.595 * MAKLI_MAP_SCALE),
@@ -139,6 +154,7 @@ type MakliAtlasMetadata = {
     width?: number;
     terrainTriangles?: number;
     pathHalfWidth?: number;
+    pathSmoothMargin?: number;
   };
   atlas?: {
     regions?: Array<{ object?: string; type?: string; uMin?: number; vMin?: number; uMax?: number; vMax?: number }>;
@@ -307,6 +323,88 @@ function terrainHeightAt(x: number, z: number): number {
   );
 }
 
+ShaderStore.ShadersStore["grassVertexShader"] = /* glsl */ `
+precision highp float;
+
+attribute vec3 position;
+attribute vec2 uv;
+
+attribute vec3 aColorSeed;
+attribute vec4 world0;
+attribute vec4 world1;
+attribute vec4 world2;
+attribute vec4 world3;
+
+uniform mat4 worldViewProjection;
+uniform mat4 world;
+uniform float uTime;
+uniform float uWindStrength;
+uniform float uWindFrequency;
+
+varying float vHeightRatio;
+varying float vColorSeed;
+varying float vShade;
+
+void main() {
+  vec3 pos = position;
+  float heightRatio = uv.y;
+
+  float phase = aColorSeed.y;
+  float bend = heightRatio * heightRatio;
+  float wind1 = sin(uTime * uWindFrequency + phase) * uWindStrength * bend;
+  float wind2 = sin(uTime * uWindFrequency * 1.7 + phase * 1.3 + pos.x * 0.5) * uWindStrength * 0.4 * bend;
+
+  pos.x += wind1 + wind2;
+  pos.z += wind2 * 0.6;
+
+  mat4 instanceWorld = mat4(world0, world1, world2, world3);
+  gl_Position = worldViewProjection * instanceWorld * vec4(pos, 1.0);
+  vHeightRatio = heightRatio;
+  vColorSeed = aColorSeed.x;
+  vShade = aColorSeed.z;
+}
+`;
+
+ShaderStore.ShadersStore["grassFragmentShader"] = /* glsl */ `
+precision highp float;
+
+varying float vHeightRatio;
+varying float vColorSeed;
+varying float vShade;
+
+uniform vec3 uSunDirection;
+uniform vec3 uSunColor;
+uniform float uAmbient;
+
+void main() {
+  vec3 baseCol = vec3(0.529, 0.427, 0.298);
+  vec3 greenShift = vec3(0.42, 0.52, 0.22);
+  vec3 tipColor = vec3(0.58, 0.55, 0.32);
+
+  vec3 bladeColor = mix(baseCol, greenShift, vColorSeed * 0.6 + 0.2);
+  float heightBright = mix(0.7, 1.1, vHeightRatio);
+  bladeColor *= heightBright;
+  bladeColor = mix(bladeColor, tipColor, vHeightRatio * 0.3);
+
+  vec3 normal = vec3(0.0, 1.0, 0.0);
+  vec3 lightToSurface = normalize(-uSunDirection);
+  float NdotL = max(dot(normal, lightToSurface), 0.0);
+  float diffuse = NdotL * 0.65;
+  float wrapDiffuse = max((dot(normal, lightToSurface) + 0.5) / 1.5, 0.0) * 0.35;
+
+  vec3 ambient = bladeColor * uAmbient;
+  vec3 lit = bladeColor * (diffuse + wrapDiffuse) * uSunColor + ambient;
+  lit *= vShade;
+
+  float alpha = 1.0;
+  if (vHeightRatio > 0.85) {
+    alpha = 1.0 - (vHeightRatio - 0.85) / 0.15;
+  }
+
+  gl_FragColor = vec4(lit, alpha);
+}
+`;
+
 class MusicLoop {
   private context: AudioContext | null = null;
   private master: GainNode | null = null;
@@ -462,9 +560,18 @@ class ExplorationMode {
   private drawHaloMaterial: StandardMaterial;
   private glowLayer: GlowLayer;
   private threatMaterial: StandardMaterial;
+  private threatWispMaterial: StandardMaterial;
   private terrainAtlasTexture: Texture;
+  private grassPatches: Mesh[] = [];
+  private grassMaterial!: ShaderMaterial;
+  private grassPathAvoidanceRadius = 2;
+  private hearts = 3;
+  private invulnerableUntil = 0;
+  private heartElements: HTMLElement[] = [];
 
   constructor(private scene: Scene, private canvas: HTMLCanvasElement) {
+    console.time("[Explore] constructor total");
+    console.time("[Explore] scene + materials");
     this.root = new TransformNode("exploreRoot", scene);
     this.root.setEnabled(false);
     this.mapRoot = new TransformNode("makliMapRoot", scene);
@@ -489,9 +596,12 @@ class ExplorationMode {
     this.drawHaloMaterial.disableLighting = true;
     this.drawHaloMaterial.disableDepthWrite = true;
     this.drawHaloMaterial.backFaceCulling = false;
-    this.threatMaterial = makeMaterial(scene, "threatVortexMaterial", new Color3(0.012, 0.01, 0.018), new Color3(0.035, 0.008, 0.055));
-    this.threatMaterial.alpha = 0.82;
+    this.threatMaterial = makeMaterial(scene, "threatVortexMaterial", new Color3(0.08, 0.06, 0.1), new Color3(0.1, 0.05, 0.14));
+    this.threatMaterial.alpha = 0.72;
     this.threatMaterial.disableDepthWrite = true;
+    this.threatWispMaterial = makeMaterial(scene, "threatWispMaterial", new Color3(0.1, 0.08, 0.13), new Color3(0.13, 0.06, 0.17));
+    this.threatWispMaterial.alpha = 0.42;
+    this.threatWispMaterial.disableDepthWrite = true;
 
     this.playerRoot.parent = this.root;
     this.mapRoot.parent = this.root;
@@ -532,17 +642,23 @@ class ExplorationMode {
     this.shadowGenerator.filteringQuality = ShadowGenerator.QUALITY_HIGH;
     this.shadowGenerator.bias = 0.0006;
     this.shadowGenerator.normalBias = 0.02;
-    this.shadowGenerator.darkness = 0.24;
+    this.shadowGenerator.darkness = 0.52;
     this.sun = sun;
     this.terrainAtlasTexture = new Texture(`${MAKLI_MAP_ROOT}${MAKLI_TERRAIN_ATLAS}`, scene, false, false, Texture.TRILINEAR_SAMPLINGMODE);
     this.terrainAtlasTexture.name = "makliLitAlbedoAtlas";
     this.terrainAtlasTexture.hasAlpha = false;
+    console.timeEnd("[Explore] scene + materials");
 
+    console.time("[Explore] prepareHeroPath");
     this.prepareHeroPath();
+    console.timeEnd("[Explore] prepareHeroPath");
+
     this.bindInput();
     void this.loadMakliMap();
     void this.loadHero();
     this.updateCamera();
+    this.initHeartsUI();
+    console.timeEnd("[Explore] constructor total");
   }
 
   private configureScene(): void {
@@ -555,7 +671,34 @@ class ExplorationMode {
 
   setActive(active: boolean): void {
     this.root.setEnabled(active);
-    if (active) this.scene.activeCamera = this.camera;
+    if (active) {
+      this.scene.activeCamera = this.camera;
+      this.hearts = 3;
+      this.invulnerableUntil = 0;
+      this.updateHeartsUI();
+    }
+  }
+
+  private initHeartsUI(): void {
+    const container = document.querySelector("#heartsContainer");
+    if (container) {
+      this.heartElements = [...container.querySelectorAll<HTMLElement>(".heart")];
+    }
+  }
+
+  private updateHeartsUI(): void {
+    for (let i = 0; i < this.heartElements.length; i += 1) {
+      const el = this.heartElements[i];
+      if (i >= this.hearts) {
+        el.classList.add("lost");
+      } else {
+        el.classList.remove("lost");
+      }
+      el.classList.remove("hit");
+    }
+    if (this.hearts < this.heartElements.length && this.heartElements[this.hearts]) {
+      this.heartElements[this.hearts].classList.add("hit");
+    }
   }
 
   update(dt: number): void {
@@ -566,6 +709,7 @@ class ExplorationMode {
     this.updateDrawing();
     this.updateThreats(dt);
     this.updateCamera();
+    this.updateGrassVisibility();
   }
 
   private bindInput(): void {
@@ -633,13 +777,17 @@ class ExplorationMode {
   }
 
   private async loadMakliMap(): Promise<void> {
+    console.time("[Explore] loadMakliMap total");
     try {
+      console.time("[Explore]   fetch metadata + load GLB");
       const [metadata, result] = await Promise.all([
         this.loadMakliAtlasMetadata(),
         SceneLoader.ImportMeshAsync("", MAKLI_MAP_ROOT, MAKLI_MAP_MODEL, this.scene)
       ]);
+      console.timeEnd("[Explore]   fetch metadata + load GLB");
       this.makliAtlasMetadata = metadata;
 
+      console.time("[Explore]   mesh hierarchy + configure");
       for (const node of [...result.transformNodes, ...result.meshes]) {
         if (!node.parent) node.parent = this.mapRoot;
       }
@@ -658,15 +806,26 @@ class ExplorationMode {
           this.configureMakliPropMesh(mesh);
         }
       }
+      console.timeEnd("[Explore]   mesh hierarchy + configure");
 
+      console.time("[Explore]   hero path + prop blockers");
       this.loadHeroPathFromMap(result.meshes);
       this.buildPropBlockersFromMetadata(metadata);
       this.prepareHeroPath();
       this.logMakliMapInstanceStats(result.meshes);
+      console.timeEnd("[Explore]   hero path + prop blockers");
+
+      const mapLength = (metadata.map?.length ?? 480) * MAKLI_MAP_SCALE;
+      const mapWidth = (metadata.map?.width ?? 120) * MAKLI_MAP_SCALE;
+      this.grassPathAvoidanceRadius = Math.max(1.6, (metadata.map?.pathHalfWidth ?? 4) * MAKLI_MAP_SCALE * 0.72);
+      console.time("[Explore]   createGrass");
+      this.createGrass(mapLength, mapWidth);
+      console.timeEnd("[Explore]   createGrass");
     } catch (error) {
       console.error("Unable to load baked Makli map, using fallback terrain", error);
       this.createFallbackTerrain();
     }
+    console.timeEnd("[Explore] loadMakliMap total");
   }
 
   private async loadMakliAtlasMetadata(): Promise<MakliAtlasMetadata> {
@@ -813,6 +972,7 @@ class ExplorationMode {
     terrain.receiveShadows = true;
     terrain.parent = this.root;
     this.terrainMeshes = [terrain];
+    this.createGrass(TERRAIN_LENGTH, TERRAIN_WIDTH);
   }
 
   private createTerrainTextures(): { diffuse: DynamicTexture; normal: DynamicTexture } {
@@ -950,6 +1110,24 @@ class ExplorationMode {
     return distance;
   }
 
+  private distanceToHeroPathXZ(x: number, z: number): number {
+    let distance = Number.POSITIVE_INFINITY;
+    for (let i = 0; i < this.heroPathPoints.length - 1; i += 1) {
+      const a = this.heroPathPoints[i];
+      const b = this.heroPathPoints[i + 1];
+      const abx = b.x - a.x;
+      const abz = b.z - a.z;
+      const lengthSq = abx * abx + abz * abz;
+      if (lengthSq < 0.0001) {
+        distance = Math.min(distance, Math.hypot(x - a.x, z - a.z));
+        continue;
+      }
+      const t = clamp(((x - a.x) * abx + (z - a.z) * abz) / lengthSq, 0, 1);
+      distance = Math.min(distance, Math.hypot(x - (a.x + abx * t), z - (a.z + abz * t)));
+    }
+    return distance;
+  }
+
   private updateHeroPath(dt: number): void {
     if (this.pathComplete) return;
     this.pathTime += dt * WALK_SPEED;
@@ -1059,13 +1237,11 @@ class ExplorationMode {
     this.drawHaloMesh.position.set(point.x, point.y - 0.02, point.z);
     this.drawHaloMesh.material = this.drawHaloMaterial;
     this.drawHaloMesh.parent = this.drawRoot;
-    this.glowLayer.addIncludedOnlyMesh(this.drawHaloMesh);
     this.drawMesh = MeshBuilder.CreateDisc("paintedGroundLine", { radius: 0.1, tessellation: 32 }, this.scene);
     this.drawMesh.rotation.x = Math.PI / 2;
     this.drawMesh.position.set(point.x, point.y + 0.02, point.z);
     this.drawMesh.material = this.drawMaterial;
     this.drawMesh.parent = this.drawRoot;
-    this.glowLayer.addIncludedOnlyMesh(this.drawMesh);
   }
 
   private updateStrokeMesh(
@@ -1074,7 +1250,6 @@ class ExplorationMode {
     points: Vector3[],
     halfWidth: number,
     material: StandardMaterial,
-    glow = true
   ): Mesh {
     const strokeMesh = mesh ?? new Mesh(name, this.scene);
     strokeMesh.position.set(0, 0, 0);
@@ -1084,7 +1259,6 @@ class ExplorationMode {
     vertexData.applyToMesh(strokeMesh, true);
     strokeMesh.material = material;
     strokeMesh.parent = this.drawRoot;
-    if (glow) this.glowLayer.addIncludedOnlyMesh(strokeMesh);
     return strokeMesh;
   }
 
@@ -1143,8 +1317,15 @@ class ExplorationMode {
       threat.root.position.copyFrom(next);
       threat.spin += dt * 210;
       threat.root.rotation.y = threat.spin * Math.PI / 180;
-      this.animateThreat(threat, dt);
-      if (distanceVec3(next, heroPosition) < 1.05) this.removeThreat(i);
+      this.animateThreat(threat);
+      if (distanceVec3(next, heroPosition) < 1.05) {
+        this.removeThreat(i);
+        if (performance.now() > this.invulnerableUntil) {
+          this.hearts = Math.max(0, this.hearts - 1);
+          this.invulnerableUntil = performance.now() + 1500;
+          this.updateHeartsUI();
+        }
+      }
     }
   }
 
@@ -1212,10 +1393,29 @@ class ExplorationMode {
     root.parent = this.root;
 
     const particles: Mesh[] = [];
-    for (let i = 0; i < 7; i += 1) {
-      const particle = i % 3 === 0
-        ? MeshBuilder.CreateTorus(`threatCloud${i}`, { diameter: 0.72, thickness: 0.09, tessellation: 20 }, this.scene)
-        : MeshBuilder.CreateSphere(`threatCloud${i}`, { diameter: 0.68, segments: 16 }, this.scene);
+    for (let i = 0; i < 3; i += 1) {
+      const particle = MeshBuilder.CreateDisc(`threatDust${i}`, { radius: 0.24, tessellation: 12 }, this.scene);
+      particle.material = this.threatMaterial;
+      particle.rotation.x = Math.PI / 2;
+      particle.parent = root;
+      particles.push(particle);
+    }
+    for (let i = 0; i < 4; i += 1) {
+      const particle = MeshBuilder.CreateDisc(`threatSmoke${i}`, { radius: 0.4, tessellation: 14 }, this.scene);
+      particle.material = this.threatMaterial;
+      particle.rotation.x = Math.PI / 2;
+      particle.parent = root;
+      particles.push(particle);
+    }
+    for (let i = 0; i < 4; i += 1) {
+      const particle = MeshBuilder.CreateDisc(`threatWisp${i}`, { radius: 0.55, tessellation: 12 }, this.scene);
+      particle.material = this.threatWispMaterial;
+      particle.rotation.x = Math.PI / 2;
+      particle.parent = root;
+      particles.push(particle);
+    }
+    for (let i = 0; i < 3; i += 1) {
+      const particle = MeshBuilder.CreateSphere(`threatEmber${i}`, { diameter: 0.14, segments: 6 }, this.scene);
       particle.material = this.threatMaterial;
       particle.parent = root;
       particles.push(particle);
@@ -1224,16 +1424,30 @@ class ExplorationMode {
     this.threats.push({ root, particles, velocity: Vector3.Zero(), spin: Math.random() * 360, radius: 0.58 });
   }
 
-  private animateThreat(threat: Threat, dt: number): void {
+  private animateThreat(threat: Threat): void {
+    const time = performance.now() * 0.001;
     for (let i = 0; i < threat.particles.length; i += 1) {
-      const particle = threat.particles[i];
-      const t = performance.now() * 0.001 + i * 0.87 + dt;
-      const radius = 0.14 + i * 0.048;
-      const height = 0.08 + (i / threat.particles.length) * 0.78;
-      particle.position.set(Math.cos(t * 2.6) * radius, height, Math.sin(t * 3.1) * radius);
-      const scale = 0.46 + Math.sin(t * 2.2) * 0.08;
-      particle.scaling.set(scale * (i % 3 === 0 ? 1.4 : 1), scale * 0.72, scale);
-      particle.rotation.set((78 + Math.sin(t) * 14) * Math.PI / 180, t * 120 * Math.PI / 180, 0);
+      const p = threat.particles[i];
+      const t = time + i * 0.73;
+      const layer = i < 3 ? 0 : i < 7 ? 1 : i < 11 ? 2 : 3;
+      const spiralSpeed = 4.5 - layer * 0.8;
+      const baseRadius = 0.06 + layer * 0.11;
+      const radius = baseRadius + Math.sin(t * 2.5 + i * 1.3) * 0.04;
+      const baseHeight = layer === 0 ? 0.06 : layer === 1 ? 0.28 : layer === 2 ? 0.58 : 0.32;
+      const height = baseHeight + Math.sin(t * 2.8 + i * 0.9) * 0.07;
+      p.position.set(
+        Math.cos(t * spiralSpeed + i * 1.57) * radius,
+        height,
+        Math.sin(t * spiralSpeed + i * 1.57) * radius
+      );
+      if (layer < 3) {
+        const s = 0.48 + layer * 0.14 + Math.sin(t * 2.2 + i) * 0.09;
+        p.scaling.set(s, s * 0.2, s);
+        p.rotation.set(Math.PI / 2 + Math.sin(t + i) * 0.25, t * 1.5, 0);
+      } else {
+        const s = 0.22 + Math.sin(t * 3.5) * 0.07;
+        p.scaling.set(s, s, s);
+      }
     }
   }
 
@@ -1262,9 +1476,14 @@ class ExplorationMode {
   }
 
   private async loadHero(): Promise<void> {
+    console.time("[Explore] loadHero total");
     try {
+      console.time("[Explore]   Draco ready");
       await DracoCompression.Default.whenReadyAsync();
+      console.timeEnd("[Explore]   Draco ready");
+      console.time("[Explore]   load Yusuf GLB");
       const result = await SceneLoader.ImportMeshAsync("", RESOURCE_ROOT, HERO_MODEL, this.scene);
+      console.timeEnd("[Explore]   load Yusuf GLB");
       const assetRoot = new TransformNode("yusufAssetRoot", this.scene);
       assetRoot.parent = this.modelRoot;
       for (const node of [...result.transformNodes, ...result.meshes]) {
@@ -1288,6 +1507,7 @@ class ExplorationMode {
       this.sun.includedOnlyMeshes.push(fallback);
       this.shadowGenerator.addShadowCaster(fallback);
     }
+    console.timeEnd("[Explore] loadHero total");
   }
 
   private makeHeroMeshReadable(mesh: Mesh): void {
@@ -1354,14 +1574,14 @@ class ExplorationMode {
 
     const hasBaseTexture = Boolean(editableMaterial.albedoTexture ?? editableMaterial.diffuseTexture);
     editableMaterial.emissiveTexture = undefined;
-    editableMaterial.emissiveColor = new Color3(0.018, 0.013, 0.008);
+    editableMaterial.emissiveColor = new Color3(0.006, 0.004, 0.002);
     editableMaterial.specularColor = Color3.Black();
     editableMaterial.specularPower = 8;
     editableMaterial.specularIntensity = 0.03;
     editableMaterial.roughness = 0.94;
     editableMaterial.metallic = 0;
-    editableMaterial.environmentIntensity = 0.18;
-    editableMaterial.directIntensity = 1.15;
+    editableMaterial.environmentIntensity = 0.08;
+    editableMaterial.directIntensity = 1.32;
 
     if (hasBaseTexture) {
       if (editableMaterial.diffuseColor) editableMaterial.diffuseColor = Color3.White();
@@ -1385,6 +1605,210 @@ class ExplorationMode {
     } else {
       console.error("Missing Yusuf walk animation", animationGroups.map((animation) => animation.name));
     }
+  }
+
+  private createGrassBladeVertexData(): VertexData {
+    const halfW = 0.031;
+    const segH = 0.135;
+    const positions = new Float32Array([
+      -halfW, 0, 0,
+      halfW, 0, 0,
+      -halfW * 0.7, segH, 0,
+      halfW * 0.7, segH, 0,
+      -halfW * 0.38, segH * 2, 0,
+      halfW * 0.38, segH * 2, 0,
+      0, segH * 3, 0,
+    ]);
+    const uvs = new Float32Array([
+      0, 0, 1, 0,
+      0, 0.33, 1, 0.33,
+      0, 0.67, 1, 0.67,
+      0.5, 1,
+    ]);
+    const indices = [0, 1, 2, 1, 3, 2, 2, 3, 4, 3, 5, 4, 4, 5, 6];
+    const vd = new VertexData();
+    vd.positions = positions;
+    vd.uvs = uvs;
+    vd.indices = indices;
+    const normals = new Float32Array(positions.length);
+    VertexData.ComputeNormals(positions, indices, normals);
+    vd.normals = normals;
+    return vd;
+  }
+
+  private createGrass(mapLength: number, mapWidth: number): void {
+    console.time("[Explore]     grass blade data + shader material");
+    const bladeData = this.createGrassBladeVertexData();
+    this.grassMaterial = new ShaderMaterial("grassMaterial", this.scene,
+      { vertex: "grass", fragment: "grass" },
+      {
+        attributes: ["position", "uv", "world0", "world1", "world2", "world3", "aColorSeed"],
+        uniforms: ["worldViewProjection", "world", "uTime", "uSunDirection", "uWindStrength", "uWindFrequency", "uSunColor", "uAmbient"],
+        needAlphaBlending: true,
+      }
+    );
+    this.grassMaterial.backFaceCulling = false;
+    this.grassMaterial.setFloat("uWindStrength", GRASS_WIND_STRENGTH);
+    this.grassMaterial.setFloat("uWindFrequency", GRASS_WIND_FREQUENCY);
+    this.grassMaterial.setVector3("uSunDirection", LATE_DAY_SUN_DIRECTION);
+    this.grassMaterial.setColor3("uSunColor", new Color3(1.08, 0.82, 0.54));
+    this.grassMaterial.setFloat("uAmbient", 0.38);
+    console.timeEnd("[Explore]     grass blade data + shader material");
+
+    const originX = -mapLength / 2;
+    const originZ = -mapWidth / 2;
+    const cols = Math.ceil(mapLength / GRASS_PATCH_SIZE);
+    const rows = Math.ceil(mapWidth / GRASS_PATCH_SIZE);
+
+    console.time("[Explore]     grass patch creation");
+    console.log(`[Explore]     grass grid: ${cols}x${rows} = ${cols * rows} patches`);
+    this.grassPatches = [];
+    for (let col = 0; col < cols; col++) {
+      for (let row = 0; row < rows; row++) {
+        const patch = this.createGrassPatch(col, row, bladeData, originX, originZ);
+        if (patch) this.grassPatches.push(patch);
+      }
+    }
+    console.timeEnd("[Explore]     grass patch creation");
+    console.log(`[Explore]     created ${this.grassPatches.length} grass patches`);
+  }
+
+  private createGrassPatch(col: number, row: number, bladeData: VertexData, originX: number, originZ: number): Mesh | null {
+    const patchMinX = originX + col * GRASS_PATCH_SIZE;
+    const patchMinZ = originZ + row * GRASS_PATCH_SIZE;
+
+    const blades: Array<{ x: number; z: number; y: number; seed: number; shade: number }> = [];
+    const patchCenterX = patchMinX + GRASS_PATCH_SIZE * 0.5;
+    const patchCenterZ = patchMinZ + GRASS_PATCH_SIZE * 0.5;
+    const pathDistance = this.distanceToHeroPathXZ(patchCenterX, patchCenterZ);
+    const nearHeroPath = pathDistance < GRASS_PATHSIDE_BONUS_RADIUS;
+    const clumpNoise = hashNoise(col * 17.1, row * 23.7);
+    const pathBonusClumps = nearHeroPath ? 6 + Math.floor(hashNoise(col * 4.7, row * 8.9) * 5) : 0;
+    const clumpCount = GRASS_MIN_CLUMPS_PER_PATCH +
+      Math.floor(clumpNoise * (GRASS_MAX_CLUMPS_PER_PATCH - GRASS_MIN_CLUMPS_PER_PATCH + 1)) +
+      pathBonusClumps;
+
+    for (let c = 0; c < clumpCount; c++) {
+      const cx = patchMinX + hashNoise(col * 11.3 + c * 7.1, row * 13.7) * GRASS_PATCH_SIZE;
+      const cz = patchMinZ + hashNoise(col * 5.9, row * 9.1 + c * 3.3) * GRASS_PATCH_SIZE;
+      const density = fractalNoise(cx * GRASS_DENSITY_NOISE_SCALE + 100, cz * GRASS_DENSITY_NOISE_SCALE + 200);
+      const pathDensityBoost = nearHeroPath ? 0.2 : 0;
+      if (density + pathDensityBoost < GRASS_DENSITY_THRESHOLD) continue;
+      if (this.isGrassPlacementBlocked(cx, cz)) continue;
+
+      const centerY = this.groundHeightAt(cx, cz);
+      if (centerY < GRASS_MIN_ELEVATION && this.distanceToHeroPathXZ(cx, cz) < this.grassPathAvoidanceRadius * 1.8) continue;
+
+      const clumpSeed = hashNoise(cx * 2.1, cz * 2.1);
+      const bladeCount = Math.round(lerp(GRASS_MIN_BLADES_PER_CLUMP, GRASS_MAX_BLADES_PER_CLUMP, clumpSeed));
+      const radius = GRASS_CLUMP_RADIUS * (0.75 + clumpSeed * 0.7);
+
+      for (let b = 0; b < bladeCount; b++) {
+        const angle = hashNoise(cx + b * 2.37, cz - b * 1.91) * Math.PI * 2;
+        const distance = Math.sqrt(hashNoise(cx - b * 4.17, cz + b * 3.13)) * radius;
+        const bx = cx + Math.cos(angle) * distance;
+        const bz = cz + Math.sin(angle) * distance;
+        if (bx < patchMinX || bx > patchMinX + GRASS_PATCH_SIZE || bz < patchMinZ || bz > patchMinZ + GRASS_PATCH_SIZE) continue;
+        if (this.isGrassPlacementBlocked(bx, bz)) continue;
+        const y = this.groundHeightAt(bx, bz);
+        if (y < GRASS_MIN_ELEVATION && this.distanceToHeroPathXZ(bx, bz) < this.grassPathAvoidanceRadius * 1.8) continue;
+        blades.push({
+          x: bx,
+          z: bz,
+          y: y + 0.012,
+          seed: hashNoise(bx * 13.1, bz * 17.9),
+          shade: this.grassShadeAt(bx, bz, y)
+        });
+      }
+    }
+
+    if (blades.length === 0) return null;
+
+    const count = blades.length;
+    const matrices = new Float32Array(count * 16);
+    const colorSeeds = new Float32Array(count * 3);
+
+    for (let i = 0; i < count; i++) {
+      const blade = blades[i];
+      const rotY = blade.seed * Math.PI * 2;
+      const scaleX = 0.72 + hashNoise(blade.x * 3.1, blade.z * 5.7) * 0.52;
+      const scaleY = 0.78 + hashNoise(blade.x * 7.3, blade.z * 3.1) * 0.62;
+      const cosR = Math.cos(rotY);
+      const sinR = Math.sin(rotY);
+
+      const base = i * 16;
+      matrices[base + 0] = scaleX * cosR;
+      matrices[base + 1] = 0;
+      matrices[base + 2] = scaleX * sinR;
+      matrices[base + 3] = 0;
+      matrices[base + 4] = 0;
+      matrices[base + 5] = scaleY;
+      matrices[base + 6] = 0;
+      matrices[base + 7] = 0;
+      matrices[base + 8] = -scaleX * sinR;
+      matrices[base + 9] = 0;
+      matrices[base + 10] = scaleX * cosR;
+      matrices[base + 11] = 0;
+      matrices[base + 12] = blade.x;
+      matrices[base + 13] = blade.y;
+      matrices[base + 14] = blade.z;
+      matrices[base + 15] = 1;
+
+      colorSeeds[i * 3] = blade.seed;
+      colorSeeds[i * 3 + 1] = blade.seed * 6.283;
+      colorSeeds[i * 3 + 2] = blade.shade;
+    }
+
+    const mesh = new Mesh(`grassPatch_${col}_${row}`, this.scene);
+    bladeData.applyToMesh(mesh);
+    mesh.thinInstanceSetBuffer("matrix", matrices, 16, true);
+    mesh.thinInstanceRegisterAttribute("aColorSeed", 3);
+    mesh.thinInstanceSetBuffer("aColorSeed", colorSeeds, 3, true);
+    mesh.material = this.grassMaterial;
+    mesh.parent = this.root;
+    mesh.isPickable = false;
+    mesh.receiveShadows = false;
+    this.sun.includedOnlyMeshes.push(mesh);
+    mesh.thinInstanceRefreshBoundingInfo(true);
+
+    return mesh;
+  }
+
+  private isGrassPlacementBlocked(x: number, z: number): boolean {
+    if (this.distanceToHeroPathXZ(x, z) < this.grassPathAvoidanceRadius) return true;
+    for (const blocker of this.propBlockers) {
+      const dx = x - blocker.center.x;
+      const dz = z - blocker.center.y;
+      if (dx * dx + dz * dz < (blocker.radius + 0.45) * (blocker.radius + 0.45)) return true;
+    }
+    return false;
+  }
+
+  private grassShadeAt(x: number, z: number, y: number): number {
+    let shade = clamp(0.76 + y * 0.08 + (fractalNoise(x * 0.05 + 71, z * 0.05 - 19) - 0.5) * 0.18, 0.58, 1.04);
+    const shadowDir = new Vector2(LATE_DAY_SUN_DIRECTION.x, LATE_DAY_SUN_DIRECTION.z);
+    const shadowLength = Math.max(0.001, Math.hypot(shadowDir.x, shadowDir.y));
+    shadowDir.x /= shadowLength;
+    shadowDir.y /= shadowLength;
+
+    for (const blocker of this.propBlockers) {
+      const toPoint = new Vector2(x - blocker.center.x, z - blocker.center.y);
+      const alongShadow = toPoint.x * shadowDir.x + toPoint.y * shadowDir.y;
+      if (alongShadow <= 0 || alongShadow > blocker.radius * 5.8) continue;
+      const crossShadow = Math.abs(toPoint.x * shadowDir.y - toPoint.y * shadowDir.x);
+      const width = blocker.radius * lerp(0.7, 1.35, alongShadow / (blocker.radius * 5.8));
+      if (crossShadow < width) {
+        const feather = 1 - clamp(crossShadow / width, 0, 1);
+        const fade = 1 - clamp(alongShadow / (blocker.radius * 5.8), 0, 1);
+        shade *= lerp(1, 0.62, feather * fade);
+      }
+    }
+    return shade;
+  }
+
+  private updateGrassVisibility(): void {
+    if (this.grassPatches.length === 0) return;
+    this.grassMaterial.setFloat("uTime", performance.now() * 0.001);
   }
 
   private groundHeightAt(x: number, z: number): number {
