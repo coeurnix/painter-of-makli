@@ -42,7 +42,7 @@ const DRAW_MAX_SECONDS = 3;
 const DRAW_Y_OFFSET = 0.05;
 const DRAW_CORE_HALF_WIDTH = 0.075;
 const DRAW_HALO_HALF_WIDTH = 0.22;
-const THREAT_SPEED = 2.4;
+const THREAT_SPEED = 2.2;
 const THREAT_AVOIDANCE_RANGE = 2.8;
 const THREAT_BASE_MAX_COUNT = 8;
 const THREAT_DESTINATION_MAX_COUNT = 18;
@@ -59,11 +59,11 @@ const GRASS_WIND_FREQUENCY = 1.2;
 const GRASS_DENSITY_NOISE_SCALE = 0.06;
 const GRASS_DENSITY_THRESHOLD = 0.18;
 const GRASS_MIN_ELEVATION = -0.45;
-const GRASS_CLUMP_RADIUS = 0.42;
-const GRASS_MIN_CLUMPS_PER_PATCH = 10;
-const GRASS_MAX_CLUMPS_PER_PATCH = 13;
+const GRASS_CLUMP_RADIUS = 0.52;
+const GRASS_MIN_CLUMPS_PER_PATCH = 2;
+const GRASS_MAX_CLUMPS_PER_PATCH = 4;
 const GRASS_PATHSIDE_BONUS_RADIUS = 16;
-const GRASS_MIN_BLADES_PER_CLUMP = 20;
+const GRASS_MIN_BLADES_PER_CLUMP = 10;
 const GRASS_MAX_BLADES_PER_CLUMP = 45;
 const LATE_DAY_SUN_DIRECTION = new Vector3(-0.616, -0.391, -0.684).normalize();
 const FALLBACK_HERO_PATH_POINTS = [
@@ -347,6 +347,8 @@ varying float vShade;
 
 void main() {
   vec3 pos = position;
+  pos.y *= 1.7; // height
+  pos.x *= 0.4; // width
   float heightRatio = uv.y;
 
   float phase = aColorSeed.y;
@@ -551,6 +553,9 @@ class ExplorationMode {
   private pathTotalLength = 0;
   private drawPoints: Vector3[] = [];
   private propBlockers: PropBlocker[] = [];
+  private propBlockerCells = new Map<string, PropBlocker[]>();
+  private propBlockerCellSize = 12;
+  private maxPropBlockerRadius = 0;
   private threats: Threat[] = [];
   private drawMesh: Mesh | null = null;
   private drawHaloMesh: Mesh | null = null;
@@ -872,7 +877,11 @@ class ExplorationMode {
 
   private buildPropBlockersFromMetadata(metadata: MakliAtlasMetadata): void {
     const groups = metadata.props?.groups;
-    if (!groups) return;
+    if (!groups) {
+      this.propBlockers = [];
+      this.rebuildPropBlockerGrid();
+      return;
+    }
     const blockers: PropBlocker[] = [];
     for (const entries of Object.values(groups)) {
       for (const entry of entries) {
@@ -889,6 +898,42 @@ class ExplorationMode {
       }
     }
     this.propBlockers = blockers;
+    this.rebuildPropBlockerGrid();
+  }
+
+  private rebuildPropBlockerGrid(): void {
+    this.propBlockerCells.clear();
+    this.maxPropBlockerRadius = 0;
+    for (const blocker of this.propBlockers) {
+      this.maxPropBlockerRadius = Math.max(this.maxPropBlockerRadius, blocker.radius);
+      const key = this.propBlockerCellKey(blocker.center.x, blocker.center.y);
+      const cell = this.propBlockerCells.get(key);
+      if (cell) {
+        cell.push(blocker);
+      } else {
+        this.propBlockerCells.set(key, [blocker]);
+      }
+    }
+  }
+
+  private propBlockerCellKey(x: number, z: number): string {
+    return `${Math.floor(x / this.propBlockerCellSize)},${Math.floor(z / this.propBlockerCellSize)}`;
+  }
+
+  private propBlockersNear(x: number, z: number, radius: number): PropBlocker[] {
+    if (this.propBlockerCells.size === 0) return this.propBlockers;
+    const minCellX = Math.floor((x - radius) / this.propBlockerCellSize);
+    const maxCellX = Math.floor((x + radius) / this.propBlockerCellSize);
+    const minCellZ = Math.floor((z - radius) / this.propBlockerCellSize);
+    const maxCellZ = Math.floor((z + radius) / this.propBlockerCellSize);
+    const nearby: PropBlocker[] = [];
+    for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ += 1) {
+        const cell = this.propBlockerCells.get(`${cellX},${cellZ}`);
+        if (cell) nearby.push(...cell);
+      }
+    }
+    return nearby;
   }
 
   private logMakliMapInstanceStats(meshes: readonly unknown[]): void {
@@ -1702,6 +1747,8 @@ class ExplorationMode {
       const clumpSeed = hashNoise(cx * 2.1, cz * 2.1);
       const bladeCount = Math.round(lerp(GRASS_MIN_BLADES_PER_CLUMP, GRASS_MAX_BLADES_PER_CLUMP, clumpSeed));
       const radius = GRASS_CLUMP_RADIUS * (0.75 + clumpSeed * 0.7);
+      const centerTerrainY = terrainHeightAt(cx, cz);
+      const centerShade = this.grassShadeAt(cx, cz, centerY);
 
       for (let b = 0; b < bladeCount; b++) {
         const angle = hashNoise(cx + b * 2.37, cz - b * 1.91) * Math.PI * 2;
@@ -1710,14 +1757,14 @@ class ExplorationMode {
         const bz = cz + Math.sin(angle) * distance;
         if (bx < patchMinX || bx > patchMinX + GRASS_PATCH_SIZE || bz < patchMinZ || bz > patchMinZ + GRASS_PATCH_SIZE) continue;
         if (this.isGrassPlacementBlocked(bx, bz)) continue;
-        const y = this.groundHeightAt(bx, bz);
-        if (y < GRASS_MIN_ELEVATION && this.distanceToHeroPathXZ(bx, bz) < this.grassPathAvoidanceRadius * 1.8) continue;
+        const localTerrainDelta = clamp(terrainHeightAt(bx, bz) - centerTerrainY, -0.18, 0.18);
+        const y = centerY + localTerrainDelta;
         blades.push({
           x: bx,
           z: bz,
           y: y + 0.012,
           seed: hashNoise(bx * 13.1, bz * 17.9),
-          shade: this.grassShadeAt(bx, bz, y)
+          shade: clamp(centerShade + (hashNoise(bx * 5.3, bz * 4.7) - 0.5) * 0.06, 0.52, 1.08)
         });
       }
     }
@@ -1776,12 +1823,34 @@ class ExplorationMode {
 
   private isGrassPlacementBlocked(x: number, z: number): boolean {
     if (this.distanceToHeroPathXZ(x, z) < this.grassPathAvoidanceRadius) return true;
-    for (const blocker of this.propBlockers) {
-      const dx = x - blocker.center.x;
-      const dz = z - blocker.center.y;
-      if (dx * dx + dz * dz < (blocker.radius + 0.45) * (blocker.radius + 0.45)) return true;
+    const radius = this.maxPropBlockerRadius + 0.45;
+    if (this.propBlockerCells.size === 0) {
+      for (const blocker of this.propBlockers) {
+        if (this.doesPropBlockGrassPoint(blocker, x, z)) return true;
+      }
+      return false;
+    }
+
+    const minCellX = Math.floor((x - radius) / this.propBlockerCellSize);
+    const maxCellX = Math.floor((x + radius) / this.propBlockerCellSize);
+    const minCellZ = Math.floor((z - radius) / this.propBlockerCellSize);
+    const maxCellZ = Math.floor((z + radius) / this.propBlockerCellSize);
+    for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+      for (let cellZ = minCellZ; cellZ <= maxCellZ; cellZ += 1) {
+        const cell = this.propBlockerCells.get(`${cellX},${cellZ}`);
+        if (!cell) continue;
+        for (const blocker of cell) {
+          if (this.doesPropBlockGrassPoint(blocker, x, z)) return true;
+        }
+      }
     }
     return false;
+  }
+
+  private doesPropBlockGrassPoint(blocker: PropBlocker, x: number, z: number): boolean {
+    const dx = x - blocker.center.x;
+    const dz = z - blocker.center.y;
+    return dx * dx + dz * dz < (blocker.radius + 0.45) * (blocker.radius + 0.45);
   }
 
   private grassShadeAt(x: number, z: number, y: number): number {
@@ -1791,7 +1860,7 @@ class ExplorationMode {
     shadowDir.x /= shadowLength;
     shadowDir.y /= shadowLength;
 
-    for (const blocker of this.propBlockers) {
+    for (const blocker of this.propBlockersNear(x, z, this.maxPropBlockerRadius * 6.8)) {
       const toPoint = new Vector2(x - blocker.center.x, z - blocker.center.y);
       const alongShadow = toPoint.x * shadowDir.x + toPoint.y * shadowDir.y;
       if (alongShadow <= 0 || alongShadow > blocker.radius * 5.8) continue;
