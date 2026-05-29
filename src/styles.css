@@ -49,6 +49,7 @@ button {
 
 .splash-screen {
   background: #000;
+  cursor: pointer;
 }
 
 .splash-copy {
@@ -81,14 +82,29 @@ button {
 }
 
 .main-menu {
-  place-items: end start;
-  padding: clamp(24px, 7vw, 92px);
-  pointer-events: none;
+  place-items: end center;
+  padding: 0 24px max(28px, env(safe-area-inset-bottom));
+  overflow: hidden;
+  background: #000;
+  cursor: pointer;
 }
 
-.menu-panel {
-  width: min(460px, calc(100vw - 48px));
-  pointer-events: auto;
+.main-menu-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  background: #000;
+  object-fit: contain;
+}
+
+.main-menu.main-menu-loading .main-menu-video,
+.main-menu.main-menu-loading .start-game-button {
+  opacity: 0;
+}
+
+.main-menu.main-menu-loading {
+  pointer-events: none;
 }
 
 .kicker {
@@ -116,14 +132,7 @@ h2 {
   font-size: 32px;
 }
 
-.menu-actions {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-top: 32px;
-}
-
-.menu-actions button,
+.start-game-button,
 .hud-actions button,
 .painting-stats button {
   min-height: 44px;
@@ -134,11 +143,26 @@ h2 {
   cursor: pointer;
 }
 
-.menu-actions button:hover,
+.start-game-button {
+  position: relative;
+  z-index: 1;
+  min-width: min(240px, calc(100vw - 48px));
+  min-height: 48px;
+  border-radius: 12px;
+  background: rgba(8, 9, 12, 0.8);
+  animation: start-throb 2.27s ease-in-out infinite;
+}
+
+.start-game-button:hover,
 .hud-actions button:hover,
 .painting-stats button:hover {
   border-color: rgba(228, 196, 111, 0.9);
   background: rgba(48, 44, 34, 0.84);
+}
+
+@keyframes start-throb {
+  0%, 100% { transform: scale(1); box-shadow: 0 0 0 rgba(228, 196, 111, 0); }
+  50% { transform: scale(1.055); box-shadow: 0 0 22px rgba(228, 196, 111, 0.36); }
 }
 
 .hud {
@@ -167,6 +191,16 @@ h2 {
   border: 1px solid rgba(247, 239, 224, 0.18);
   border-radius: 6px;
   background: rgba(4, 5, 7, 0.64);
+}
+
+.score-display {
+  min-width: 112px;
+  padding: 10px 12px;
+  border: 1px solid rgba(247, 239, 224, 0.18);
+  border-radius: 6px;
+  color: #fff9ea;
+  background: rgba(4, 5, 7, 0.64);
+  text-align: right;
 }
 
 .heart {
@@ -211,75 +245,91 @@ h2 {
 }
 
 .painting {
-  align-items: stretch;
-  justify-items: stretch;
-  padding: clamp(14px, 3vw, 32px);
-  background: #131519;
+  padding: clamp(12px, 2.5vw, 28px);
+  background: #101115;
 }
 
-.painting-layout {
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: 16px;
-  width: min(1180px, 100%);
-  height: 100%;
-  margin: 0 auto;
-}
-
-.painting-toolbar {
-  display: flex;
-  align-items: end;
-  justify-content: space-between;
-  gap: 16px;
-}
-
-.painting-stats {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  color: #eee4cf;
-}
-
-.painting-stats span {
-  min-width: 112px;
+.painting-hud {
+  position: fixed;
+  top: 18px;
+  z-index: 7;
+  min-width: 118px;
   padding: 10px 12px;
-  border: 1px solid rgba(255, 255, 255, 0.16);
+  border: 1px solid rgba(255, 255, 255, 0.2);
   border-radius: 6px;
-  background: rgba(0, 0, 0, 0.22);
+  color: #fff8e4;
+  background: rgba(0, 0, 0, 0.58);
+  font-weight: 700;
 }
 
-.painting-stats button {
-  padding: 0 20px;
+.painting-score {
+  left: 18px;
+}
+
+.painting-timer {
+  right: 18px;
+  min-width: 72px;
+  text-align: center;
 }
 
 .painting-canvas-wrap {
   display: grid;
   place-items: center;
-  min-height: 0;
+  width: 100%;
+  height: 100%;
 }
 
 #paintingCanvas {
-  width: min(100%, calc((100vh - 138px) * 16 / 9));
-  max-height: calc(100vh - 138px);
-  aspect-ratio: 16 / 9;
+  width: min(calc(100vw - 40px), calc(100vh - 40px));
+  aspect-ratio: 1;
   border: 1px solid rgba(255, 255, 255, 0.18);
-  background: #202329;
+  background: #07080a;
   touch-action: none;
+}
+
+.painting.is-judging #paintingCanvas {
+  width: min(calc(100vw - 40px), calc((100vh - 40px) * 2));
+  aspect-ratio: 2 / 1;
+}
+
+.painting.is-finished .painting-hud {
+  display: none;
+}
+
+.painting-prompt {
+  position: fixed;
+  inset: 0;
+  z-index: 8;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: #fff6da;
+  background: rgba(0, 0, 0, 0.76);
+  font-size: clamp(28px, 6vw, 68px);
+  font-weight: 800;
+  line-height: 1.05;
+  text-align: center;
+  text-shadow: 0 3px 22px #000;
+  cursor: pointer;
+}
+
+.painting-prompt.hidden {
+  display: none;
 }
 
 .cutscene {
   grid-template-rows: 1fr auto;
-  gap: 20px;
-  padding: 8vh 4vw;
+  gap: 16px;
+  padding: 0;
   background: #000;
 }
 
 .video-frame {
   position: relative;
-  width: min(100%, calc(84vh * 16 / 9));
-  aspect-ratio: 16 / 9;
+  width: 100vw;
+  height: 100vh;
   overflow: hidden;
-  background: #101010;
+  background: #000;
 }
 
 .video-frame video,
@@ -291,32 +341,60 @@ h2 {
 }
 
 .video-frame video {
-  object-fit: cover;
+  object-fit: contain;
 }
 
 .cutscene-fallback {
-  display: grid;
-  place-items: center;
-  color: #bba35d;
-  background:
-    linear-gradient(rgba(0, 0, 0, 0.2), rgba(0, 0, 0, 0.66)),
-    radial-gradient(circle at 50% 35%, #3d362a, #050505 72%);
-  font-size: clamp(28px, 6vw, 72px);
+  background: #000;
 }
 
-.subtitle-line {
-  min-height: 48px;
-  margin: 0;
-  color: #fff;
-  font-size: clamp(18px, 2.3vw, 30px);
+.skip-indicator {
+  position: fixed;
+  right: 22px;
+  bottom: max(22px, env(safe-area-inset-bottom));
+  z-index: 6;
+  display: grid;
+  gap: 6px;
+  width: 84px;
+  color: #f7efe0;
+  font-size: 13px;
   text-align: center;
-  text-shadow: 0 2px 8px #000;
+  text-transform: uppercase;
+}
+
+.skip-fill {
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.skip-fill::before {
+  display: block;
+  width: calc(var(--skip-progress, 0) * 100%);
+  height: 100%;
+  background: #e4c46f;
+  content: "";
+}
+
+.stage-prompt {
+  z-index: 6;
+  padding: 24px;
+  background: rgba(0, 0, 0, 0.58);
+  cursor: pointer;
+}
+
+.stage-prompt-copy {
+  max-width: 760px;
+  color: #fff7de;
+  font-size: clamp(30px, 6vw, 70px);
+  font-weight: 800;
+  line-height: 1.05;
+  text-align: center;
+  text-shadow: 0 3px 22px #000;
 }
 
 @media (max-width: 700px) {
-  .menu-actions,
-  .painting-toolbar,
-  .painting-stats,
   .hud {
     align-items: stretch;
     flex-direction: column;
@@ -327,31 +405,14 @@ h2 {
     justify-content: space-between;
   }
 
-  .menu-actions {
-    grid-template-columns: 1fr;
-  }
-
   .hud {
     left: 10px;
     right: 10px;
   }
 
-  .hud-actions {
-    display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-  }
-
-  .hud-actions button {
-    min-width: 0;
-    padding: 0 8px;
-  }
-
-  .painting-stats {
-    display: grid;
-    grid-template-columns: 1fr 1fr auto;
-  }
-
-  .painting-stats span {
-    min-width: 0;
+  .painting-hud {
+    top: 10px;
+    min-width: 88px;
+    padding: 8px 10px;
   }
 }

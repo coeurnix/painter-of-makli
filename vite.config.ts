@@ -42,7 +42,9 @@ function mimeType(filePath: string): string {
     case ".mp4":
       return "video/mp4";
     case ".webm":
-      return "video/webm";
+      return /(?:^|[/\\])song\d+\.webm$/i.test(filePath) ? "audio/webm" : "video/webm";
+    case ".m4a":
+      return "audio/mp4";
     case ".ogg":
       return "audio/ogg";
     case ".mp3":

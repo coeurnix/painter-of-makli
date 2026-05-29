@@ -17,58 +17,49 @@
         </div>
       </section>
 
-      <section id="mainMenu" class="screen main-menu hidden" aria-label="Main menu">
-        <div class="menu-panel">
-          <p class="kicker">Painter of Makli</p>
-          <h1>Painter of Makli</h1>
-          <div class="menu-actions">
-            <button id="newGameButton" type="button">New Game</button>
-            <button id="loadGameButton" type="button">Load Game</button>
-          </div>
-        </div>
+      <section id="mainMenu" class="screen main-menu main-menu-loading hidden" aria-label="Main menu">
+        <video id="mainMenuVideo" class="main-menu-video" autoplay muted loop playsinline>
+          <source src="/resources/mainmenu.webm" type="video/webm" />
+          <source src="/resources/mainmenu.mp4" type="video/mp4" />
+        </video>
+        <button id="newGameButton" class="start-game-button" type="button">Start Game</button>
       </section>
 
       <section id="hud" class="hud hidden" aria-label="Game HUD">
-        <div class="hud-left">
-          <div id="modeLabel" class="mode-label">Exploration</div>
-          <div id="heartsContainer" class="hearts-container">
-            <span class="heart">&#9829;</span>
-            <span class="heart">&#9829;</span>
-            <span class="heart">&#9829;</span>
-          </div>
+        <div id="heartsContainer" class="hearts-container">
+          <span class="heart">&#9829;</span>
+          <span class="heart">&#9829;</span>
+          <span class="heart">&#9829;</span>
         </div>
-        <div class="hud-actions">
-          <button id="paintingModeButton" type="button">Painting</button>
-          <button id="exploreModeButton" type="button">Explore</button>
-          <button id="menuModeButton" type="button">Menu</button>
-        </div>
+        <div class="score-display">Score <strong id="exploreScore">0</strong></div>
       </section>
 
       <section id="paintingScreen" class="screen painting hidden" aria-label="Painting mode">
-        <div class="painting-layout">
-          <header class="painting-toolbar">
-            <div>
-              <p class="kicker">Restoration Study</p>
-              <h2>Reveal the subject</h2>
-            </div>
-            <div class="painting-stats">
-              <span>Score <strong id="paintScore">0</strong></span>
-              <span>Coverage <strong id="paintCoverage">0%</strong></span>
-              <button id="paintingDoneButton" type="button">Done</button>
-            </div>
-          </header>
-          <div class="painting-canvas-wrap">
-            <canvas id="paintingCanvas"></canvas>
-          </div>
+        <div class="painting-hud painting-score">Score <strong id="paintScore">0</strong></div>
+        <div class="painting-hud painting-timer"><strong id="paintTimer">60</strong></div>
+        <div class="painting-canvas-wrap">
+          <canvas id="paintingCanvas"></canvas>
+        </div>
+        <div id="paintingPrompt" class="painting-prompt">
+          Paint only the subject and don't repaint areas
         </div>
       </section>
 
       <section id="cutsceneScreen" class="screen cutscene hidden" aria-label="Cutscene">
         <div class="video-frame">
           <video id="cutsceneVideo" playsinline></video>
-          <div id="cutsceneFallback" class="cutscene-fallback">Painter of Makli</div>
+          <div id="cutsceneFallback" class="cutscene-fallback" aria-hidden="true"></div>
         </div>
-        <p id="subtitleLine" class="subtitle-line"></p>
+        <div id="skipIndicator" class="skip-indicator hidden" aria-hidden="true">
+          <span>Skip</span>
+          <div class="skip-fill"></div>
+        </div>
+      </section>
+
+      <section id="stagePrompt" class="screen stage-prompt hidden" aria-label="Stage prompt">
+        <div class="stage-prompt-copy">
+          Click on the Bhut-Pret to protect Yusuf...
+        </div>
       </section>
     </div>
 

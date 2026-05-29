@@ -28,26 +28,45 @@ import "./styles.css";
 const RESOURCE_ROOT = "/resources/";
 const MAKLI_MAP_ROOT = `${RESOURCE_ROOT}makli/`;
 const MAKLI_MAP_MODEL = "makli_necropolis_long_instanced.glb";
-const MAKLI_TERRAIN_ATLAS = "makli_lit_albedo_atlas.png";
+const MAKLI_TERRAIN_ATLAS = "makli_lit_albedo_atlas.webp";
 const MAKLI_ATLAS_METADATA = "makli_necropolis_atlas_metadata.json";
 const HERO_MODEL = "yusuf.glb";
+const GHOST_MODEL = "ghost.glb";
+const SONGS = ["song1", "song2"] as const;
+const CUTSCENE_VIDEO_BY_STAGE = {
+  1: "vid1",
+  3: "vid2",
+  5: "vid3"
+} as const;
+const FULL_VOLUME = 10 ** (-4 / 20);
+const CUTSCENE_VOLUME = 10 ** (-18 / 20);
+const VOLUME_TWEEN_SECONDS = 2;
+const CUTSCENE_SKIP_SECONDS = 2;
+const CUTSCENE_END_DELAY_SECONDS = 2;
+const STAGE_2_DESTINATION_NODE = "tripo_node_9ceb5ec4-f59b-4e91-85d9-771bd6b140b1_inst.004";
 const MAKLI_MAP_SCALE = 2 / 3;
-const WALK_SPEED = 1.35;
+const STAGE_2_DESTINATION_FALLBACK = new Vector3(-1.7665 * MAKLI_MAP_SCALE, 0, 8.177 * MAKLI_MAP_SCALE);
+const STAGE_2_PATH_COMPLETION_RATIO = 0.92;
+const STAGE_2_INITIAL_CAMERA_YAW = 45;
+const WALK_SPEED = 1.35 * 0.9 * 0.8;
+const HERO_WALK_ANIMATION_SPEED_RATIO = 2.03 * 1.8 * 1.8;
 const MODEL_FORWARD_OFFSET = 90;
 const KEYBOARD_ROTATION_SPEED = 1.9;
 const POINTER_ROTATION_SPEED = 0.0065;
 const GAMEPAD_ROTATION_SPEED = 2.4;
-const DRAW_MAX_LENGTH = 10;
-const DRAW_MAX_SECONDS = 3;
-const DRAW_Y_OFFSET = 0.05;
-const DRAW_CORE_HALF_WIDTH = 0.075;
-const DRAW_HALO_HALF_WIDTH = 0.22;
-const THREAT_SPEED = 2.2;
-const THREAT_AVOIDANCE_RANGE = 2.8;
+const THREAT_CLICK_RADIUS = 2.8;
+const THREAT_CLICK_RAY_WIDTH = 0.4;
+const CLICK_PULSE_SECONDS = 0.42;
+const THREAT_SPEED = 2.5;
 const THREAT_BASE_MAX_COUNT = 8;
-const THREAT_DESTINATION_MAX_COUNT = 18;
-const THREAT_BASE_SPAWN_DELAY = 1.6;
-const THREAT_DESTINATION_SPAWN_DELAY = 0.42;
+const THREAT_DESTINATION_MAX_COUNT = 38;
+const THREAT_FREQUENCY_MULTIPLIER = 0.75;
+const THREAT_BASE_SPAWN_DELAY = 0.8 / THREAT_FREQUENCY_MULTIPLIER;
+const THREAT_DESTINATION_SPAWN_DELAY = 0.21 / THREAT_FREQUENCY_MULTIPLIER;
+const CLICK_PULSE_HEIGHT = 0.33;
+const FIXED_LIGHTING_TUNING: LightingTuning = { emissive: 0.006, shadowDarkness: 2, lightness: 6 };
+const TERRAIN_DIFFUSE_BOOST = 2.15;
+const TERRAIN_EMISSIVE_BOOST = 0.18;
 const TERRAIN_TEXTURE_SIZE = 1024;
 const TERRAIN_LENGTH = 150;
 const TERRAIN_WIDTH = 80;
@@ -115,30 +134,40 @@ const selectors = {
   splash: "#splash",
   beginButton: "#beginButton",
   mainMenu: "#mainMenu",
+  mainMenuVideo: "#mainMenuVideo",
   newGameButton: "#newGameButton",
-  loadGameButton: "#loadGameButton",
   hud: "#hud",
-  modeLabel: "#modeLabel",
-  paintingModeButton: "#paintingModeButton",
-  exploreModeButton: "#exploreModeButton",
-  menuModeButton: "#menuModeButton",
+  exploreScore: "#exploreScore",
   paintingScreen: "#paintingScreen",
   paintingCanvas: "#paintingCanvas",
   paintScore: "#paintScore",
-  paintCoverage: "#paintCoverage",
-  paintingDoneButton: "#paintingDoneButton",
+  paintTimer: "#paintTimer",
+  paintingPrompt: "#paintingPrompt",
   cutsceneScreen: "#cutsceneScreen",
   cutsceneVideo: "#cutsceneVideo",
   cutsceneFallback: "#cutsceneFallback",
-  subtitleLine: "#subtitleLine"
+  skipIndicator: "#skipIndicator",
+  stagePrompt: "#stagePrompt"
 } as const;
 
 type Threat = {
   root: TransformNode;
-  particles: Mesh[];
+  visualRoot: TransformNode | null;
   velocity: Vector3;
-  spin: number;
   radius: number;
+  bobPhase: number;
+};
+
+type ClickPulse = {
+  mesh: Mesh;
+  material: StandardMaterial;
+  startedAt: number;
+};
+
+type LightingTuning = {
+  emissive: number;
+  shadowDarkness: number;
+  lightness: number;
 };
 
 type PropBlocker = {
@@ -252,18 +281,6 @@ function normalizeVec3(value: Vector3): Vector3 {
 
 function distanceVec3(a: Vector3, b: Vector3): number {
   return lengthVec3(subVec3(a, b));
-}
-
-function subVec2(a: Vector2, b: Vector2): Vector2 {
-  return new Vector2(a.x - b.x, a.y - b.y);
-}
-
-function lengthVec2(value: Vector2): number {
-  return Math.hypot(value.x, value.y);
-}
-
-function distanceVec2(a: Vector2, b: Vector2): number {
-  return lengthVec2(subVec2(a, b));
 }
 
 function distancePointToSegment2D(point: Vector2, a: Vector3, b: Vector3): number {
@@ -408,48 +425,84 @@ void main() {
 `;
 
 class MusicLoop {
-  private context: AudioContext | null = null;
-  private master: GainNode | null = null;
-  private timer = 0;
-  private isRunning = false;
+  private audio = new Audio();
+  private songIndex = 0;
+  private targetVolume = FULL_VOLUME;
+  private tweenFrame = 0;
+  private retryBound = false;
+  private started = false;
 
-  async start(): Promise<void> {
-    if (this.isRunning) return;
-    this.context = this.context ?? new AudioContext();
-    await this.context.resume();
-    this.master = this.context.createGain();
-    this.master.gain.value = 0.045;
-    this.master.connect(this.context.destination);
-    this.isRunning = true;
-    this.schedulePhrase();
-    this.timer = window.setInterval(() => this.schedulePhrase(), 8000);
+  constructor() {
+    this.audio.preload = "auto";
+    this.audio.loop = false;
+    this.audio.volume = FULL_VOLUME;
+    this.audio.addEventListener("ended", () => this.playNextSong());
   }
 
-  stop(): void {
-    if (this.timer) window.clearInterval(this.timer);
-    this.timer = 0;
-    this.isRunning = false;
-    this.master?.disconnect();
-    this.master = null;
+  start(): void {
+    if (this.started) return;
+    this.started = true;
+    this.songIndex = 0;
+    this.playCurrentSong();
   }
 
-  private schedulePhrase(): void {
-    if (!this.context || !this.master) return;
-    const now = this.context.currentTime;
-    const notes = [220, 261.63, 329.63, 392, 329.63, 293.66, 246.94, 220];
-    notes.forEach((frequency, index) => {
-      const oscillator = this.context!.createOscillator();
-      const gain = this.context!.createGain();
-      oscillator.type = index % 2 === 0 ? "sine" : "triangle";
-      oscillator.frequency.value = frequency;
-      gain.gain.setValueAtTime(0, now + index);
-      gain.gain.linearRampToValueAtTime(0.18, now + index + 0.05);
-      gain.gain.exponentialRampToValueAtTime(0.001, now + index + 0.9);
-      oscillator.connect(gain);
-      gain.connect(this.master!);
-      oscillator.start(now + index);
-      oscillator.stop(now + index + 1);
-    });
+  setCutsceneDucked(ducked: boolean): void {
+    this.tweenTo(ducked ? CUTSCENE_VOLUME : FULL_VOLUME);
+  }
+
+  private playCurrentSong(): void {
+    this.audio.src = this.songSource(SONGS[this.songIndex]);
+    this.audio.currentTime = 0;
+    this.tryPlay();
+  }
+
+  private tryPlay(): void {
+    const playPromise = this.audio.play();
+    if (playPromise) {
+      playPromise.catch(() => this.retryAfterGesture());
+    }
+  }
+
+  private playNextSong(): void {
+    this.songIndex = (this.songIndex + 1) % SONGS.length;
+    this.playCurrentSong();
+  }
+
+  private songSource(name: string): string {
+    return `${RESOURCE_ROOT}${name}.${this.prefersWebmOpus() ? "webm" : "m4a"}`;
+  }
+
+  private prefersWebmOpus(): boolean {
+    return Boolean(this.audio.canPlayType('audio/webm; codecs="opus"'));
+  }
+
+  private retryAfterGesture(): void {
+    if (this.retryBound) return;
+    this.retryBound = true;
+    const retry = () => {
+      this.retryBound = false;
+      window.removeEventListener("pointerdown", retry);
+      window.removeEventListener("keydown", retry);
+      if (!this.audio.paused) return;
+      this.tryPlay();
+    };
+    window.addEventListener("pointerdown", retry, { once: true });
+    window.addEventListener("keydown", retry, { once: true });
+  }
+
+  private tweenTo(volume: number): void {
+    this.targetVolume = volume;
+    window.cancelAnimationFrame(this.tweenFrame);
+    const from = this.audio.volume;
+    const startedAt = performance.now();
+    const duration = VOLUME_TWEEN_SECONDS * 1000;
+    const step = (now: number) => {
+      const t = clamp((now - startedAt) / duration, 0, 1);
+      const eased = 1 - (1 - t) * (1 - t);
+      this.audio.volume = lerp(from, this.targetVolume, eased);
+      if (t < 1) this.tweenFrame = window.requestAnimationFrame(step);
+    };
+    this.tweenFrame = window.requestAnimationFrame(step);
   }
 }
 
@@ -530,12 +583,11 @@ class ExplorationMode {
   private playerRoot: TransformNode;
   private visualRoot: TransformNode;
   private modelRoot: TransformNode;
-  private drawRoot: TransformNode;
+  private pulseRoot: TransformNode;
   private shadowGenerator: ShadowGenerator;
   private keys = new Set<string>();
   private activePointers = new Map<number, PointerEvent>();
   private rotatePointerId: number | null = null;
-  private drawPointerId: number | null = null;
   private rotateDragLastX = 0;
   private lastPinchDistance = 0;
   private cameraYaw = -45;
@@ -545,34 +597,43 @@ class ExplorationMode {
   private sun: DirectionalLight;
   private pathTime = 0;
   private pathComplete = false;
+  private isPaused = false;
+  private stage2Active = false;
+  private stage2Started = false;
+  private stage2Complete = false;
+  private stage2EndDistance = Number.POSITIVE_INFINITY;
+  private stage2DestinationPoint = STAGE_2_DESTINATION_FALLBACK.clone();
+  private onStage2Complete: (() => void) | null = null;
   private heroPathPoints: Vector3[] = FALLBACK_HERO_PATH_POINTS.map((point) => point.clone());
   private spawnTimer = 0;
-  private drawingStartedAt = 0;
-  private drawLength = 0;
   private pathSegmentLengths: number[] = [];
   private pathTotalLength = 0;
-  private drawPoints: Vector3[] = [];
   private propBlockers: PropBlocker[] = [];
   private propBlockerCells = new Map<string, PropBlocker[]>();
   private propBlockerCellSize = 12;
   private maxPropBlockerRadius = 0;
   private threats: Threat[] = [];
-  private drawMesh: Mesh | null = null;
-  private drawHaloMesh: Mesh | null = null;
+  private clickPulses: ClickPulse[] = [];
   private terrainMeshes: Mesh[] = [];
   private makliAtlasMetadata: MakliAtlasMetadata | null = null;
-  private drawMaterial: StandardMaterial;
-  private drawHaloMaterial: StandardMaterial;
   private glowLayer: GlowLayer;
-  private threatMaterial: StandardMaterial;
-  private threatWispMaterial: StandardMaterial;
+  private threatGhostMaterial: StandardMaterial;
+  private threatGhostTemplate: TransformNode | null = null;
+  private threatGhostHeight = 1;
+  private threatGhostRadius = 0.58;
   private terrainAtlasTexture: Texture;
   private grassPatches: Mesh[] = [];
   private grassMaterial!: ShaderMaterial;
   private grassPathAvoidanceRadius = 2;
   private hearts = 3;
+  private threatScore = 0;
   private invulnerableUntil = 0;
   private heartElements: HTMLElement[] = [];
+  private scoreElement: HTMLElement | null = null;
+  private lightingTuning: LightingTuning = FIXED_LIGHTING_TUNING;
+  private tunableMaterials = new Set<object>();
+  private terrainMaterials = new Set<object>();
+  private baseMaterialColors = new WeakMap<object, { diffuse?: Color3; albedo?: Color3 }>();
 
   constructor(private scene: Scene, private canvas: HTMLCanvasElement) {
     console.time("[Explore] constructor total");
@@ -584,35 +645,25 @@ class ExplorationMode {
     this.playerRoot = new TransformNode("playerRoot", scene);
     this.visualRoot = new TransformNode("visualRoot", scene);
     this.modelRoot = new TransformNode("modelRoot", scene);
-    this.drawRoot = new TransformNode("drawRoot", scene);
+    this.pulseRoot = new TransformNode("clickPulseRoot", scene);
 
     this.configureScene();
 
     this.glowLayer = new GlowLayer("drawGlowLayer", scene, { blurKernelSize: 48 });
     this.glowLayer.intensity = 0.72;
 
-    this.drawMaterial = makeMaterial(scene, "paintedGroundLineMaterial", new Color3(0.52, 0.96, 1), new Color3(0.28, 1, 1));
-    this.drawMaterial.alpha = 0.96;
-    this.drawMaterial.disableLighting = true;
-    this.drawMaterial.disableDepthWrite = true;
-    this.drawMaterial.backFaceCulling = false;
-    this.drawHaloMaterial = makeMaterial(scene, "paintedGroundLineHaloMaterial", new Color3(0.14, 0.76, 0.86), new Color3(0.08, 0.72, 0.86));
-    this.drawHaloMaterial.alpha = 0.34;
-    this.drawHaloMaterial.disableLighting = true;
-    this.drawHaloMaterial.disableDepthWrite = true;
-    this.drawHaloMaterial.backFaceCulling = false;
-    this.threatMaterial = makeMaterial(scene, "threatVortexMaterial", new Color3(0.08, 0.06, 0.1), new Color3(0.1, 0.05, 0.14));
-    this.threatMaterial.alpha = 0.72;
-    this.threatMaterial.disableDepthWrite = true;
-    this.threatWispMaterial = makeMaterial(scene, "threatWispMaterial", new Color3(0.1, 0.08, 0.13), new Color3(0.13, 0.06, 0.17));
-    this.threatWispMaterial.alpha = 0.42;
-    this.threatWispMaterial.disableDepthWrite = true;
+    this.threatGhostMaterial = makeMaterial(scene, "threatGhostMaterial", new Color3(0.58, 0.96, 1), new Color3(1.45, 2.2, 2.35));
+    this.threatGhostMaterial.alpha = 0.58;
+    this.threatGhostMaterial.disableLighting = true;
+    this.threatGhostMaterial.disableDepthWrite = true;
+    this.threatGhostMaterial.backFaceCulling = false;
+    this.threatGhostMaterial.transparencyMode = Material.MATERIAL_ALPHABLEND;
 
     this.playerRoot.parent = this.root;
     this.mapRoot.parent = this.root;
     this.visualRoot.parent = this.playerRoot;
     this.modelRoot.parent = this.visualRoot;
-    this.drawRoot.parent = this.root;
+    this.pulseRoot.parent = this.root;
 
     this.camera = new FreeCamera("exploreCamera", new Vector3(0, 10, -14), scene);
     this.camera.fov = 31 * Math.PI / 180;
@@ -627,8 +678,8 @@ class ExplorationMode {
     ambient.parent = this.root;
 
     const sun = new DirectionalLight("shadowLight", LATE_DAY_SUN_DIRECTION.clone(), scene);
-    sun.intensity = 0.96;
-    sun.diffuse = new Color3(1, 0.74, 0.48);
+    sun.intensity = 1.28;
+    sun.diffuse = new Color3(1, 0.82, 0.6);
     sun.specular = new Color3(0.12, 0.08, 0.04);
     sun.position.copyFrom(LATE_DAY_SUN_DIRECTION.scale(-80));
     sun.autoUpdateExtends = false;
@@ -647,7 +698,7 @@ class ExplorationMode {
     this.shadowGenerator.filteringQuality = ShadowGenerator.QUALITY_HIGH;
     this.shadowGenerator.bias = 0.0006;
     this.shadowGenerator.normalBias = 0.02;
-    this.shadowGenerator.darkness = 0.52;
+    this.shadowGenerator.darkness = this.lightingTuning.shadowDarkness;
     this.sun = sun;
     this.terrainAtlasTexture = new Texture(`${MAKLI_MAP_ROOT}${MAKLI_TERRAIN_ATLAS}`, scene, false, false, Texture.TRILINEAR_SAMPLINGMODE);
     this.terrainAtlasTexture.name = "makliLitAlbedoAtlas";
@@ -661,8 +712,10 @@ class ExplorationMode {
     this.bindInput();
     void this.loadMakliMap();
     void this.loadHero();
+    void this.loadThreatGhost();
     this.updateCamera();
     this.initHeartsUI();
+    this.initScoreUI();
     console.timeEnd("[Explore] constructor total");
   }
 
@@ -681,7 +734,29 @@ class ExplorationMode {
       this.hearts = 3;
       this.invulnerableUntil = 0;
       this.updateHeartsUI();
+      this.updateScoreUI();
     }
+  }
+
+  startStage2(onComplete: () => void): void {
+    this.stage2Active = true;
+    this.stage2Started = false;
+    this.stage2Complete = false;
+    this.onStage2Complete = onComplete;
+    this.isPaused = true;
+    this.cameraYaw = STAGE_2_INITIAL_CAMERA_YAW;
+    this.configureStage2PathRange();
+    this.threatScore = 0;
+    this.updateScoreUI();
+    this.clearClickPulses();
+    this.clearThreats();
+    this.updateHeroPath(0);
+  }
+
+  beginStage2(): void {
+    if (!this.stage2Active || this.stage2Started) return;
+    this.stage2Started = true;
+    this.isPaused = false;
   }
 
   private initHeartsUI(): void {
@@ -689,6 +764,15 @@ class ExplorationMode {
     if (container) {
       this.heartElements = [...container.querySelectorAll<HTMLElement>(".heart")];
     }
+  }
+
+  private initScoreUI(): void {
+    this.scoreElement = document.querySelector(selectors.exploreScore);
+    this.updateScoreUI();
+  }
+
+  private updateScoreUI(): void {
+    if (this.scoreElement) this.scoreElement.textContent = String(this.threatScore);
   }
 
   private updateHeartsUI(): void {
@@ -710,8 +794,14 @@ class ExplorationMode {
     if (!this.root.isEnabled()) return;
     this.handleKeyboardRotation(dt);
     this.handleGamepadCamera(dt);
+    if (this.isPaused) {
+      this.updateClickPulses();
+      this.updateCamera();
+      this.updateGrassVisibility();
+      return;
+    }
     this.updateHeroPath(dt);
-    this.updateDrawing();
+    this.updateClickPulses();
     this.updateThreats(dt);
     this.updateCamera();
     this.updateGrassVisibility();
@@ -741,11 +831,6 @@ class ExplorationMode {
       return;
     }
     this.updatePinch(event);
-    if (this.drawPointerId === event.pointerId) {
-      event.preventDefault();
-      const point = this.pickGroundPoint(event.clientX, event.clientY);
-      if (point) this.appendDrawPoint(point);
-    }
   }
 
   private onPointerDown(event: PointerEvent): void {
@@ -758,24 +843,18 @@ class ExplorationMode {
       this.canvas.setPointerCapture?.(event.pointerId);
       return;
     }
-    if (this.drawPointerId !== null || (event.pointerType === "mouse" && event.button !== 0)) return;
+    if (event.pointerType === "mouse" && event.button !== 0) return;
     const point = this.pickGroundPoint(event.clientX, event.clientY);
     if (!point) return;
     event.preventDefault();
-    this.drawPointerId = event.pointerId;
-    this.canvas.setPointerCapture?.(event.pointerId);
-    this.startDrawing(point);
+    this.createClickPulse(point);
+    this.removeThreatsAlongPointer(event.clientX, event.clientY, point);
   }
 
   private onPointerUp(event: PointerEvent): void {
     this.activePointers.delete(event.pointerId);
     if (this.rotatePointerId === event.pointerId) {
       this.rotatePointerId = null;
-      this.canvas.releasePointerCapture?.(event.pointerId);
-    }
-    if (this.drawPointerId === event.pointerId) {
-      this.finishDrawing();
-      this.drawPointerId = null;
       this.canvas.releasePointerCapture?.(event.pointerId);
     }
     this.lastPinchDistance = 0;
@@ -807,6 +886,8 @@ class ExplorationMode {
         if (this.isTerrainChunk(mesh.name)) {
           this.configureMakliTerrainMesh(mesh);
           this.terrainMeshes.push(mesh);
+        } else if (this.isOriginArtifactPropMesh(mesh)) {
+          this.disableOriginArtifactPropMesh(mesh);
         } else {
           this.configureMakliPropMesh(mesh);
         }
@@ -815,6 +896,7 @@ class ExplorationMode {
 
       console.time("[Explore]   hero path + prop blockers");
       this.loadHeroPathFromMap(result.meshes);
+      this.loadStage2DestinationFromMap([...result.transformNodes, ...result.meshes]);
       this.buildPropBlockersFromMetadata(metadata);
       this.prepareHeroPath();
       this.logMakliMapInstanceStats(result.meshes);
@@ -843,21 +925,38 @@ class ExplorationMode {
     return /^Terrain_AtlasChunk_0[0-3](?:$|[._])/.test(name);
   }
 
+  private isOriginArtifactPropMesh(mesh: Mesh): boolean {
+    if (mesh.getTotalVertices() === 0) return false;
+    if (mesh.instances.length > 0 || mesh.thinInstanceCount > 0) return false;
+    mesh.computeWorldMatrix(true);
+    const center = mesh.getBoundingInfo().boundingBox.centerWorld;
+    return Math.hypot(center.x, center.y, center.z) < 0.01;
+  }
+
+  private disableOriginArtifactPropMesh(mesh: Mesh): void {
+    mesh.isVisible = false;
+    mesh.visibility = 0;
+    mesh.isPickable = false;
+    mesh.checkCollisions = false;
+    mesh.alwaysSelectAsActiveMesh = false;
+  }
+
   private configureMakliTerrainMesh(mesh: Mesh): void {
     const material = new StandardMaterial(`${mesh.name}_bakedMaterial`, this.scene);
     const tint = this.terrainChunkTint(mesh.name);
     material.diffuseTexture = this.terrainAtlasTexture;
+    material.diffuseColor = new Color3(tint, tint, tint);
     material.emissiveTexture = this.terrainAtlasTexture;
-    material.diffuseColor = Color3.Black();
-    material.emissiveColor = new Color3(tint, tint, tint);
+    material.emissiveColor = new Color3(TERRAIN_EMISSIVE_BOOST, TERRAIN_EMISSIVE_BOOST * 0.86, TERRAIN_EMISSIVE_BOOST * 0.62);
     material.specularColor = Color3.Black();
     material.roughness = 1;
-    material.disableLighting = true;
+    material.disableLighting = false;
     material.backFaceCulling = false;
     mesh.material = material;
-    mesh.receiveShadows = false;
+    mesh.receiveShadows = true;
     mesh.alwaysSelectAsActiveMesh = true;
-    material.freeze();
+    this.terrainMaterials.add(material);
+    this.registerTunableMaterial(material);
   }
 
   private terrainChunkTint(name: string): number {
@@ -872,6 +971,7 @@ class ExplorationMode {
     this.sun.includedOnlyMeshes.push(mesh);
     this.makeMaterialOpaque(mesh.material);
     this.liftPropMaterial(mesh.material);
+    this.registerTunableMaterial(mesh.material);
     this.shadowGenerator.addShadowCaster(mesh, true);
   }
 
@@ -1081,6 +1181,45 @@ class ExplorationMode {
       this.pathSegmentLengths.push(length);
       this.pathTotalLength += length;
     }
+    if (this.stage2Active) this.configureStage2PathRange();
+  }
+
+  private loadStage2DestinationFromMap(nodes: readonly { name: string; getAbsolutePosition?: () => Vector3 }[]): void {
+    const destinationNode = nodes.find((node) => node.name === STAGE_2_DESTINATION_NODE || node.name.includes(STAGE_2_DESTINATION_NODE));
+    const position = destinationNode?.getAbsolutePosition?.();
+    if (position) {
+      this.stage2DestinationPoint.copyFrom(position);
+      this.stage2DestinationPoint.y = 0;
+    }
+  }
+
+  private configureStage2PathRange(): void {
+    if (this.pathTotalLength <= 0) return;
+    this.pathTime = this.closestPathDistanceTo(Vector3.Zero());
+    this.stage2EndDistance = this.pathTime + (this.pathTotalLength - this.pathTime) * STAGE_2_PATH_COMPLETION_RATIO;
+    this.pathComplete = false;
+  }
+
+  private closestPathDistanceTo(target: Vector3): number {
+    let closestDistance = Number.POSITIVE_INFINITY;
+    let closestPathDistance = this.pathTotalLength;
+    let walked = 0;
+    for (let i = 0; i < this.heroPathPoints.length - 1; i += 1) {
+      const a = this.heroPathPoints[i];
+      const b = this.heroPathPoints[i + 1];
+      const abx = b.x - a.x;
+      const abz = b.z - a.z;
+      const lengthSq = abx * abx + abz * abz;
+      const t = lengthSq > 0.0001 ? clamp(((target.x - a.x) * abx + (target.z - a.z) * abz) / lengthSq, 0, 1) : 0;
+      const projected = new Vector3(a.x + abx * t, 0, a.z + abz * t);
+      const distance = Math.hypot(target.x - projected.x, target.z - projected.z);
+      if (distance < closestDistance) {
+        closestDistance = distance;
+        closestPathDistance = walked + this.pathSegmentLengths[i] * t;
+      }
+      walked += this.pathSegmentLengths[i] ?? 0;
+    }
+    return closestPathDistance;
   }
 
   private loadHeroPathFromMap(meshes: readonly unknown[]): void {
@@ -1176,8 +1315,9 @@ class ExplorationMode {
   private updateHeroPath(dt: number): void {
     if (this.pathComplete) return;
     this.pathTime += dt * WALK_SPEED;
-    if (this.pathTime >= this.pathTotalLength) {
-      this.pathTime = this.pathTotalLength;
+    const endDistance = this.stage2Active ? this.stage2EndDistance : this.pathTotalLength;
+    if (this.pathTime >= endDistance) {
+      this.pathTime = endDistance;
       this.pathComplete = true;
     }
 
@@ -1193,6 +1333,11 @@ class ExplorationMode {
     this.visualYaw = lerpAngleDegrees(this.visualYaw, yaw, Math.min(1, dt * 12));
     this.visualRoot.rotation.set(0, (this.visualYaw + MODEL_FORWARD_OFFSET) * Math.PI / 180, 0);
     this.visualRoot.position.set(0, 0, 0);
+    if (this.stage2Active && this.pathComplete && !this.stage2Complete) {
+      this.stage2Complete = true;
+      this.isPaused = true;
+      window.setTimeout(() => this.onStage2Complete?.(), 250);
+    }
   }
 
   private pathPositionAt(distance: number): Vector3 {
@@ -1223,121 +1368,45 @@ class ExplorationMode {
     );
   }
 
-  private startDrawing(point: Vector3): void {
-    this.clearDrawing();
-    this.drawingStartedAt = performance.now();
-    this.drawLength = 0;
-    point.y += DRAW_Y_OFFSET;
-    this.drawPoints = [point];
-    this.updateDrawPreviewMarker(point);
+  private createClickPulse(point: Vector3): void {
+    const material = makeMaterial(this.scene, "clickPulseMaterial", new Color3(0.52, 0.96, 1), new Color3(0.18, 0.9, 1));
+    material.alpha = 0.78;
+    material.disableLighting = true;
+    material.disableDepthWrite = true;
+    material.backFaceCulling = false;
+    material.transparencyMode = Material.MATERIAL_ALPHABLEND;
+
+    const mesh = MeshBuilder.CreateDisc("clickPulse", { radius: 0.2, tessellation: 48 }, this.scene);
+    mesh.rotation.x = Math.PI / 2;
+    mesh.position.set(point.x, this.groundHeightAt(point.x, point.z) + CLICK_PULSE_HEIGHT, point.z);
+    mesh.material = material;
+    mesh.parent = this.pulseRoot;
+    this.clickPulses.push({ mesh, material, startedAt: performance.now() });
   }
 
-  private appendDrawPoint(point: Vector3): void {
-    if (this.drawPoints.length === 0) return;
-    point.y += DRAW_Y_OFFSET;
-    const last = this.drawPoints[this.drawPoints.length - 1];
-    const segmentLength = distanceVec3(last, point);
-    if (segmentLength < 0.18) return;
-    const remaining = DRAW_MAX_LENGTH - this.drawLength;
-    const clampedPoint = segmentLength > remaining
-      ? addVec3(last, scaleVec3(normalizeVec3(subVec3(point, last)), remaining))
-      : point;
-    this.drawPoints.push(clampedPoint);
-    this.drawLength += Math.min(segmentLength, remaining);
-    this.updateDrawMesh(false);
-    if (this.drawLength >= DRAW_MAX_LENGTH - 0.001) this.finishDrawing();
-  }
-
-  private updateDrawing(): void {
-    if (this.drawPointerId === null || this.drawPoints.length < 2) return;
-    if ((performance.now() - this.drawingStartedAt) / 1000 >= DRAW_MAX_SECONDS) this.finishDrawing();
-  }
-
-  private finishDrawing(): void {
-    const completedPointerId = this.drawPointerId;
-    if (this.drawPoints.length >= 3) {
-      this.updateDrawMesh(true);
-      const polygon = this.drawPoints.map((point) => new Vector2(point.x, point.z));
-      this.removeThreatsInside(polygon);
-      window.setTimeout(() => this.clearDrawing(), 380);
-    } else {
-      this.clearDrawing();
-    }
-    this.drawPointerId = null;
-    if (completedPointerId !== null) this.canvas.releasePointerCapture?.(completedPointerId);
-  }
-
-  private updateDrawMesh(close: boolean): void {
-    const points = close && this.drawPoints.length > 2 ? [...this.drawPoints, this.drawPoints[0]] : this.drawPoints;
-    if (points.length < 2) return;
-    this.drawHaloMesh = this.updateStrokeMesh(this.drawHaloMesh, "paintedGroundLineHalo", points, DRAW_HALO_HALF_WIDTH, this.drawHaloMaterial);
-    this.drawMesh = this.updateStrokeMesh(this.drawMesh, "paintedGroundLine", points, DRAW_CORE_HALF_WIDTH, this.drawMaterial);
-  }
-
-  private updateDrawPreviewMarker(point: Vector3): void {
-    this.drawHaloMesh?.dispose();
-    this.drawMesh?.dispose();
-    this.drawHaloMesh = MeshBuilder.CreateDisc("paintedGroundLineHalo", { radius: 0.25, tessellation: 32 }, this.scene);
-    this.drawHaloMesh.rotation.x = Math.PI / 2;
-    this.drawHaloMesh.position.set(point.x, point.y - 0.02, point.z);
-    this.drawHaloMesh.material = this.drawHaloMaterial;
-    this.drawHaloMesh.parent = this.drawRoot;
-    this.drawMesh = MeshBuilder.CreateDisc("paintedGroundLine", { radius: 0.1, tessellation: 32 }, this.scene);
-    this.drawMesh.rotation.x = Math.PI / 2;
-    this.drawMesh.position.set(point.x, point.y + 0.02, point.z);
-    this.drawMesh.material = this.drawMaterial;
-    this.drawMesh.parent = this.drawRoot;
-  }
-
-  private updateStrokeMesh(
-    mesh: Mesh | null,
-    name: string,
-    points: Vector3[],
-    halfWidth: number,
-    material: StandardMaterial,
-  ): Mesh {
-    const strokeMesh = mesh ?? new Mesh(name, this.scene);
-    strokeMesh.position.set(0, 0, 0);
-    strokeMesh.rotation.set(0, 0, 0);
-    strokeMesh.scaling.set(1, 1, 1);
-    const vertexData = this.createStrokeVertexData(points, halfWidth);
-    vertexData.applyToMesh(strokeMesh, true);
-    strokeMesh.material = material;
-    strokeMesh.parent = this.drawRoot;
-    return strokeMesh;
-  }
-
-  private createStrokeVertexData(points: Vector3[], halfWidth: number): VertexData {
-    const positions: number[] = [];
-    const indices: number[] = [];
-    for (let i = 0; i < points.length; i += 1) {
-      const previous = points[Math.max(0, i - 1)];
-      const next = points[Math.min(points.length - 1, i + 1)];
-      const direction = normalizeVec3(subVec3(next, previous));
-      const side = new Vector3(-direction.z, 0, direction.x);
-      positions.push(
-        points[i].x + side.x * halfWidth, points[i].y, points[i].z + side.z * halfWidth,
-        points[i].x - side.x * halfWidth, points[i].y, points[i].z - side.z * halfWidth
-      );
-      if (i < points.length - 1) {
-        const base = i * 2;
-        indices.push(base, base + 1, base + 2, base + 1, base + 3, base + 2);
+  private updateClickPulses(): void {
+    const now = performance.now();
+    for (let i = this.clickPulses.length - 1; i >= 0; i -= 1) {
+      const pulse = this.clickPulses[i];
+      const progress = clamp((now - pulse.startedAt) / (CLICK_PULSE_SECONDS * 1000), 0, 1);
+      const eased = 1 - (1 - progress) * (1 - progress);
+      const radius = lerp(0.35, THREAT_CLICK_RADIUS, eased);
+      pulse.mesh.scaling.set(radius, radius, radius);
+      pulse.material.alpha = (1 - progress) * 0.72;
+      if (progress >= 1) {
+        pulse.mesh.dispose(false, false);
+        pulse.material.dispose();
+        this.clickPulses.splice(i, 1);
       }
     }
-    const vertexData = new VertexData();
-    vertexData.positions = positions;
-    vertexData.indices = indices;
-    VertexData.ComputeNormals(positions, indices, vertexData.normals = []);
-    return vertexData;
   }
 
-  private clearDrawing(): void {
-    this.drawPoints = [];
-    this.drawLength = 0;
-    this.drawHaloMesh?.dispose();
-    this.drawMesh?.dispose();
-    this.drawHaloMesh = null;
-    this.drawMesh = null;
+  private clearClickPulses(): void {
+    for (const pulse of this.clickPulses) {
+      pulse.mesh.dispose(false, false);
+      pulse.material.dispose();
+    }
+    this.clickPulses = [];
   }
 
   private updateThreats(dt: number): void {
@@ -1355,13 +1424,11 @@ class ExplorationMode {
       const threat = this.threats[i];
       const toHero = subVec3(heroPosition, threat.root.position);
       toHero.y = 0;
-      const steering = addVec3(normalizeVec3(toHero), this.propAvoidance(threat.root.position, threat.radius));
-      threat.velocity = scaleVec3(normalizeVec3(steering), THREAT_SPEED);
+      threat.velocity = scaleVec3(normalizeVec3(toHero), THREAT_SPEED);
       const next = addVec3(threat.root.position, scaleVec3(threat.velocity, dt));
       next.y = this.groundHeightAt(next.x, next.z) + 0.75;
       threat.root.position.copyFrom(next);
-      threat.spin += dt * 210;
-      threat.root.rotation.y = threat.spin * Math.PI / 180;
+      threat.root.rotation.y = Math.atan2(threat.velocity.x, threat.velocity.z);
       this.animateThreat(threat);
       if (distanceVec3(next, heroPosition) < 1.05) {
         this.removeThreat(i);
@@ -1374,46 +1441,13 @@ class ExplorationMode {
     }
   }
 
-  private propAvoidance(position: Vector3, radius: number): Vector3 {
-    let avoidance = Vector3.Zero();
-    const point = new Vector2(position.x, position.z);
-    for (const blocker of this.propBlockers) {
-      if (distanceVec2(point, blocker.center) > blocker.radius + THREAT_AVOIDANCE_RANGE + radius) continue;
-      const closest = this.closestPointOnBlocker(point, blocker);
-      let away = subVec2(point, closest);
-      let distance = lengthVec2(away);
-      if (distance < 0.001) {
-        away = subVec2(point, blocker.center);
-        distance = Math.max(0.001, lengthVec2(away));
-      }
-      const influence = Math.max(0, 1 - distance / (THREAT_AVOIDANCE_RANGE + radius));
-      avoidance = addVec3(avoidance, new Vector3((away.x / distance) * influence * 2.25, 0, (away.y / distance) * influence * 2.25));
-    }
-    return avoidance;
-  }
-
-  private closestPointOnBlocker(point: Vector2, blocker: PropBlocker): Vector2 {
-    const cos = Math.cos(-blocker.rotationY);
-    const sin = Math.sin(-blocker.rotationY);
-    const dx = point.x - blocker.center.x;
-    const dz = point.y - blocker.center.y;
-    const localX = dx * cos - dz * sin;
-    const localZ = dx * sin + dz * cos;
-    const clampedX = Math.min(blocker.halfSize.x, Math.max(-blocker.halfSize.x, localX));
-    const clampedZ = Math.min(blocker.halfSize.y, Math.max(-blocker.halfSize.y, localZ));
-    const worldCos = Math.cos(blocker.rotationY);
-    const worldSin = Math.sin(blocker.rotationY);
-    return new Vector2(
-      blocker.center.x + clampedX * worldCos - clampedZ * worldSin,
-      blocker.center.y + clampedX * worldSin + clampedZ * worldCos
-    );
-  }
-
   private pathProgress(): number {
     return this.pathTotalLength > 0 ? clamp(this.pathTime / this.pathTotalLength, 0, 1) : 0;
   }
 
   private spawnThreat(): void {
+    if (!this.threatGhostTemplate) return;
+
     const heroPosition = this.playerRoot.position;
     const progress = this.pathProgress();
     const lookAheadDistance = lerp(9, 18, progress) + Math.random() * 9;
@@ -1433,91 +1467,110 @@ class ExplorationMode {
       : spawnCenter;
     const spawnX = spawnPosition.x;
     const spawnZ = spawnPosition.z;
-    const root = new TransformNode("threatVortex", this.scene);
+    const root = new TransformNode("threatGhost", this.scene);
     root.position.set(spawnX, this.groundHeightAt(spawnX, spawnZ) + 0.75, spawnZ);
     root.parent = this.root;
 
-    const particles: Mesh[] = [];
-    for (let i = 0; i < 3; i += 1) {
-      const particle = MeshBuilder.CreateDisc(`threatDust${i}`, { radius: 0.24, tessellation: 12 }, this.scene);
-      particle.material = this.threatMaterial;
-      particle.rotation.x = Math.PI / 2;
-      particle.parent = root;
-      particles.push(particle);
-    }
-    for (let i = 0; i < 4; i += 1) {
-      const particle = MeshBuilder.CreateDisc(`threatSmoke${i}`, { radius: 0.4, tessellation: 14 }, this.scene);
-      particle.material = this.threatMaterial;
-      particle.rotation.x = Math.PI / 2;
-      particle.parent = root;
-      particles.push(particle);
-    }
-    for (let i = 0; i < 4; i += 1) {
-      const particle = MeshBuilder.CreateDisc(`threatWisp${i}`, { radius: 0.55, tessellation: 12 }, this.scene);
-      particle.material = this.threatWispMaterial;
-      particle.rotation.x = Math.PI / 2;
-      particle.parent = root;
-      particles.push(particle);
-    }
-    for (let i = 0; i < 3; i += 1) {
-      const particle = MeshBuilder.CreateSphere(`threatEmber${i}`, { diameter: 0.14, segments: 6 }, this.scene);
-      particle.material = this.threatMaterial;
-      particle.parent = root;
-      particles.push(particle);
-    }
+    const visualRoot = this.threatGhostTemplate.clone("threatGhostVisual", root) as TransformNode | null;
+    visualRoot?.setEnabled(true);
 
-    this.threats.push({ root, particles, velocity: Vector3.Zero(), spin: Math.random() * 360, radius: 0.58 });
+    this.threats.push({
+      root,
+      visualRoot,
+      velocity: Vector3.Zero(),
+      radius: this.threatGhostRadius,
+      bobPhase: Math.random() * Math.PI * 2
+    });
   }
 
   private animateThreat(threat: Threat): void {
     const time = performance.now() * 0.001;
-    for (let i = 0; i < threat.particles.length; i += 1) {
-      const p = threat.particles[i];
-      const t = time + i * 0.73;
-      const layer = i < 3 ? 0 : i < 7 ? 1 : i < 11 ? 2 : 3;
-      const spiralSpeed = 4.5 - layer * 0.8;
-      const baseRadius = 0.06 + layer * 0.11;
-      const radius = baseRadius + Math.sin(t * 2.5 + i * 1.3) * 0.04;
-      const baseHeight = layer === 0 ? 0.06 : layer === 1 ? 0.28 : layer === 2 ? 0.58 : 0.32;
-      const height = baseHeight + Math.sin(t * 2.8 + i * 0.9) * 0.07;
-      p.position.set(
-        Math.cos(t * spiralSpeed + i * 1.57) * radius,
-        height,
-        Math.sin(t * spiralSpeed + i * 1.57) * radius
-      );
-      if (layer < 3) {
-        const s = 0.48 + layer * 0.14 + Math.sin(t * 2.2 + i) * 0.09;
-        p.scaling.set(s, s * 0.2, s);
-        p.rotation.set(Math.PI / 2 + Math.sin(t + i) * 0.25, t * 1.5, 0);
-      } else {
-        const s = 0.22 + Math.sin(t * 3.5) * 0.07;
-        p.scaling.set(s, s, s);
-      }
-    }
+    if (!threat.visualRoot) return;
+    const bobAmplitude = this.threatGhostHeight * 0.25;
+    threat.visualRoot.position.y = Math.sin(time * Math.PI + threat.bobPhase) * bobAmplitude;
   }
 
-  private removeThreatsInside(polygon: Vector2[]): void {
+  private removeThreatsAlongPointer(clientX: number, clientY: number, groundPoint: Vector3): void {
+    const rect = this.canvas.getBoundingClientRect();
+    const ray = this.scene.createPickingRay(clientX - rect.left, clientY - rect.top, null, this.camera);
+    const maxDistance = Math.max(0, distanceVec3(ray.origin, groundPoint)) + 8;
     for (let i = this.threats.length - 1; i >= 0; i -= 1) {
-      const position = this.threats[i].root.position;
-      if (this.pointInPolygon(new Vector2(position.x, position.z), polygon)) this.removeThreat(i);
+      const threat = this.threats[i];
+      if (this.doesPointerRayHitThreat(ray, maxDistance, threat, groundPoint)) this.removeThreat(i, true);
     }
   }
 
-  private removeThreat(index: number): void {
+  private doesPointerRayHitThreat(ray: Ray, maxDistance: number, threat: Threat, groundPoint: Vector3): boolean {
+    const center = threat.root.position;
+    const toCenter = subVec3(center, ray.origin);
+    const alongRay = toCenter.x * ray.direction.x + toCenter.y * ray.direction.y + toCenter.z * ray.direction.z;
+    if (alongRay >= 0 && alongRay <= maxDistance) {
+      const closest = addVec3(ray.origin, scaleVec3(ray.direction, alongRay));
+      if (distanceVec3(center, closest) <= THREAT_CLICK_RAY_WIDTH + threat.radius) return true;
+    }
+
+    const groundDistance = distancePointToSegment2D(new Vector2(center.x, center.z), ray.origin, groundPoint);
+    return groundDistance <= THREAT_CLICK_RAY_WIDTH + threat.radius;
+  }
+
+  private removeThreat(index: number, scored = false): void {
     const [threat] = this.threats.splice(index, 1);
-    threat.root.dispose(false, true);
+    threat.root.dispose(false, false);
+    if (scored) {
+      this.threatScore += 1;
+      this.updateScoreUI();
+    }
   }
 
-  private pointInPolygon(point: Vector2, polygon: Vector2[]): boolean {
-    let inside = false;
-    for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i, i += 1) {
-      const a = polygon[i];
-      const b = polygon[j];
-      const crosses = (a.y > point.y) !== (b.y > point.y);
-      const xAtY = ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y || 0.000001) + a.x;
-      if (crosses && point.x < xAtY) inside = !inside;
+  private clearThreats(): void {
+    for (const threat of this.threats) threat.root.dispose(false, false);
+    this.threats = [];
+    this.spawnTimer = 0;
+  }
+
+  private async loadThreatGhost(): Promise<void> {
+    try {
+      await DracoCompression.Default.whenReadyAsync();
+      const result = await SceneLoader.ImportMeshAsync("", RESOURCE_ROOT, GHOST_MODEL, this.scene);
+      const assetRoot = new TransformNode("threatGhostTemplate", this.scene);
+      assetRoot.parent = this.root;
+
+      for (const node of [...result.transformNodes, ...result.meshes]) {
+        if (!node.parent) node.parent = assetRoot;
+      }
+      for (const mesh of result.meshes) {
+        if (!(mesh instanceof Mesh)) continue;
+        mesh.isPickable = false;
+        mesh.material = this.threatGhostMaterial;
+      }
+
+      const bounds = assetRoot.getHierarchyBoundingVectors(true, (mesh) => mesh instanceof Mesh);
+      const height = bounds.max.y - bounds.min.y;
+      const width = bounds.max.x - bounds.min.x;
+      const depth = bounds.max.z - bounds.min.z;
+      this.threatGhostHeight = Math.max(0.1, height);
+      this.threatGhostRadius = Math.max(0.58, Math.max(width, depth) * 0.5);
+      assetRoot.position.y -= bounds.min.y;
+      assetRoot.setEnabled(false);
+      this.threatGhostTemplate = assetRoot;
+    } catch (error) {
+      console.error("Unable to load ghost threat model", error);
+      this.createFallbackThreatGhost();
     }
-    return inside;
+  }
+
+  private createFallbackThreatGhost(): void {
+    const assetRoot = new TransformNode("fallbackThreatGhostTemplate", this.scene);
+    assetRoot.parent = this.root;
+    const body = MeshBuilder.CreateCapsule("fallbackThreatGhostBody", { height: 1.2, radius: 0.32 }, this.scene);
+    body.position.y = 0.6;
+    body.material = this.threatGhostMaterial;
+    body.isPickable = false;
+    body.parent = assetRoot;
+    assetRoot.setEnabled(false);
+    this.threatGhostHeight = 1.2;
+    this.threatGhostRadius = 0.58;
+    this.threatGhostTemplate = assetRoot;
   }
 
   private async loadHero(): Promise<void> {
@@ -1538,6 +1591,7 @@ class ExplorationMode {
         if (mesh instanceof Mesh) {
           mesh.receiveShadows = true;
           this.makeHeroMeshReadable(mesh);
+          this.registerTunableMaterial(mesh.material);
           this.sun.includedOnlyMeshes.push(mesh);
           this.shadowGenerator.addShadowCaster(mesh, true);
         }
@@ -1548,6 +1602,7 @@ class ExplorationMode {
       const fallback = MeshBuilder.CreateCapsule("fallbackHero", { height: 1.8, radius: 0.34 }, this.scene);
       fallback.position.y = 0.9;
       fallback.material = makeMaterial(this.scene, "fallbackHeroMaterial", new Color3(0.18, 0.23, 0.28));
+      this.registerTunableMaterial(fallback.material);
       fallback.parent = this.modelRoot;
       this.sun.includedOnlyMeshes.push(fallback);
       this.shadowGenerator.addShadowCaster(fallback);
@@ -1638,6 +1693,71 @@ class ExplorationMode {
     if (editableMaterial.albedoColor) editableMaterial.albedoColor = new Color3(0.46, 0.37, 0.25);
   }
 
+  setLightingTuning(tuning: LightingTuning): void {
+    this.lightingTuning = tuning;
+    this.shadowGenerator.darkness = tuning.shadowDarkness;
+    for (const material of this.tunableMaterials) this.applyLightingTuning(material);
+  }
+
+  private registerTunableMaterial(material: Mesh["material"]): void {
+    if (!material) return;
+    this.tunableMaterials.add(material);
+    const editableMaterial = material as { diffuseColor?: Color3; albedoColor?: Color3 };
+    if (!this.baseMaterialColors.has(material)) {
+      this.baseMaterialColors.set(material, {
+        diffuse: editableMaterial.diffuseColor?.clone(),
+        albedo: editableMaterial.albedoColor?.clone()
+      });
+    }
+    this.applyLightingTuning(material);
+  }
+
+  private applyLightingTuning(material: object): void {
+    const editableMaterial = material as {
+      diffuseColor?: Color3;
+      albedoColor?: Color3;
+      emissiveColor?: Color3;
+      directIntensity?: number;
+    };
+    const baseColors = this.baseMaterialColors.get(material);
+    const lightness = this.lightingTuning.lightness;
+    if (this.terrainMaterials.has(material)) {
+      if (editableMaterial.emissiveColor) {
+        editableMaterial.emissiveColor = new Color3(
+          TERRAIN_EMISSIVE_BOOST,
+          TERRAIN_EMISSIVE_BOOST * 0.86,
+          TERRAIN_EMISSIVE_BOOST * 0.62
+        );
+      }
+      if (editableMaterial.directIntensity !== undefined) editableMaterial.directIntensity = 1.32 * lightness;
+      if (editableMaterial.diffuseColor && baseColors?.diffuse) {
+        editableMaterial.diffuseColor = this.scaledColor(baseColors.diffuse, lightness * TERRAIN_DIFFUSE_BOOST);
+      }
+      if (editableMaterial.albedoColor && baseColors?.albedo) {
+        editableMaterial.albedoColor = this.scaledColor(baseColors.albedo, lightness * TERRAIN_DIFFUSE_BOOST);
+      }
+      return;
+    }
+    if (editableMaterial.emissiveColor) {
+      editableMaterial.emissiveColor = new Color3(
+        this.lightingTuning.emissive,
+        this.lightingTuning.emissive * 0.68,
+        this.lightingTuning.emissive * 0.34
+      );
+    }
+    if (editableMaterial.directIntensity !== undefined) editableMaterial.directIntensity = 1.32 * lightness;
+    if (editableMaterial.diffuseColor && baseColors?.diffuse) {
+      editableMaterial.diffuseColor = this.scaledColor(baseColors.diffuse, lightness);
+    }
+    if (editableMaterial.albedoColor && baseColors?.albedo) {
+      editableMaterial.albedoColor = this.scaledColor(baseColors.albedo, lightness);
+    }
+  }
+
+  private scaledColor(color: Color3, scale: number): Color3 {
+    return new Color3(clamp(color.r * scale, 0, 1), clamp(color.g * scale, 0, 1), clamp(color.b * scale, 0, 1));
+  }
+
   private playWalkAnimation(animationGroups: AnimationGroup[]): void {
     const group = animationGroups.find((animation) => {
       const name = animation.name.toLowerCase();
@@ -1646,7 +1766,7 @@ class ExplorationMode {
 
     if (group) {
       if (group.name !== "NlaTrack.004") console.info(`Using animation track "${group.name}" for "NlaTrack.004"`);
-      group.start(true, 1.56);
+      group.start(true, HERO_WALK_ANIMATION_SPEED_RATIO);
     } else {
       console.error("Missing Yusuf walk animation", animationGroups.map((animation) => animation.name));
     }
@@ -1949,56 +2069,86 @@ class ExplorationMode {
   }
 }
 
+type PaintingRoundAssets = {
+  outline: HTMLImageElement;
+  painting: HTMLImageElement;
+  mask: Uint8Array;
+  winner: HTMLImageElement;
+  subjectPixels: number;
+};
+
 class PaintingMode {
   private context: CanvasRenderingContext2D;
-  private source: HTMLCanvasElement;
-  private target: HTMLCanvasElement;
-  private mask: Uint8ClampedArray;
+  private revealCanvas = document.createElement("canvas");
+  private revealContext: CanvasRenderingContext2D;
   private painted: Uint8Array;
+  private assets: PaintingRoundAssets | null = null;
+  private phase: "inactive" | "loading" | "prompt" | "painting" | "judging" = "inactive";
   private isPainting = false;
+  private currentRound = 0;
+  private timer = 60;
+  private penaltyPoints = 0;
   private score = 0;
   private paintedSubjectPixels = 0;
-  private readonly width = 960;
-  private readonly height = 540;
-  private readonly brushRadius = 38;
+  private judgedSeconds = 0;
+  private lastPenaltyAt = -1000;
+  private onComplete: (() => void) | null = null;
+  private readonly size = 1254;
+  private readonly judgingWidth = 2508;
+  private readonly roundCount = 4;
+  private readonly brushRadius = Math.round(1254 / 15);
 
   constructor(
+    private screen: HTMLElement,
     private canvas: HTMLCanvasElement,
     private scoreElement: HTMLElement,
-    private coverageElement: HTMLElement
+    private timerElement: HTMLElement,
+    private promptElement: HTMLElement
   ) {
     const context = canvas.getContext("2d", { willReadFrequently: true });
-    if (!context) throw new Error("Painting canvas could not be initialized");
+    const revealContext = this.revealCanvas.getContext("2d", { willReadFrequently: true });
+    if (!context || !revealContext) throw new Error("Painting canvas could not be initialized");
     this.context = context;
-    this.canvas.width = this.width;
-    this.canvas.height = this.height;
-    this.source = document.createElement("canvas");
-    this.target = document.createElement("canvas");
-    this.source.width = this.target.width = this.width;
-    this.source.height = this.target.height = this.height;
-    this.mask = new Uint8ClampedArray(this.width * this.height);
-    this.painted = new Uint8Array(this.width * this.height);
-    this.createImages();
+    this.revealContext = revealContext;
+    this.revealCanvas.width = this.size;
+    this.revealCanvas.height = this.size;
+    this.painted = new Uint8Array(this.size * this.size);
     this.bind();
-    this.reset();
+    this.setCanvasSquare();
   }
 
-  reset(): void {
-    this.score = 0;
-    this.paintedSubjectPixels = 0;
-    this.painted.fill(0);
-    this.context.drawImage(this.source, 0, 0);
-    this.updateStats();
+  start(onComplete: () => void): void {
+    this.onComplete = onComplete;
+    this.currentRound = 0;
+    void this.loadRound(0);
+  }
+
+  update(dt: number): void {
+    if (this.phase === "painting") {
+      this.timer = Math.max(0, this.timer - dt);
+      this.updateStats();
+      if (this.timer <= 0) this.beginJudging();
+    } else if (this.phase === "judging") {
+      this.judgedSeconds += dt;
+      this.renderJudging();
+      if (this.judgedSeconds >= 7) this.advanceRound();
+    }
   }
 
   private bind(): void {
+    this.promptElement.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      if (this.phase === "prompt") this.beginPainting();
+    });
     this.canvas.addEventListener("pointerdown", (event) => {
+      if (this.phase !== "painting") return;
+      event.preventDefault();
       this.canvas.setPointerCapture(event.pointerId);
       this.isPainting = true;
       this.paintAt(event);
     });
     this.canvas.addEventListener("pointermove", (event) => {
-      if (this.isPainting) this.paintAt(event);
+      if (this.phase === "painting" && this.isPainting) this.paintAt(event);
     });
     this.canvas.addEventListener("pointerup", () => {
       this.isPainting = false;
@@ -2008,123 +2158,265 @@ class PaintingMode {
     });
   }
 
-  private createImages(): void {
-    const sourceContext = this.source.getContext("2d");
-    const targetContext = this.target.getContext("2d");
-    if (!sourceContext || !targetContext) throw new Error("Painting buffers could not be initialized");
-
-    const sourceGradient = sourceContext.createLinearGradient(0, 0, this.width, this.height);
-    sourceGradient.addColorStop(0, "#273033");
-    sourceGradient.addColorStop(1, "#6a6054");
-    sourceContext.fillStyle = sourceGradient;
-    sourceContext.fillRect(0, 0, this.width, this.height);
-    sourceContext.fillStyle = "rgba(20, 20, 22, 0.46)";
-    for (let i = 0; i < 90; i += 1) {
-      sourceContext.beginPath();
-      sourceContext.arc(Math.random() * this.width, Math.random() * this.height, 8 + Math.random() * 42, 0, Math.PI * 2);
-      sourceContext.fill();
-    }
-
-    const targetGradient = targetContext.createLinearGradient(0, 0, this.width, this.height);
-    targetGradient.addColorStop(0, "#d9c7a4");
-    targetGradient.addColorStop(0.55, "#b55d47");
-    targetGradient.addColorStop(1, "#27384a");
-    targetContext.fillStyle = targetGradient;
-    targetContext.fillRect(0, 0, this.width, this.height);
-    targetContext.fillStyle = "#1a1d20";
-    targetContext.fillRect(0, 410, this.width, 130);
-    targetContext.fillStyle = "#e8d7b1";
-    targetContext.beginPath();
-    targetContext.ellipse(480, 276, 145, 190, 0.05, 0, Math.PI * 2);
-    targetContext.fill();
-    targetContext.fillStyle = "#22262a";
-    targetContext.beginPath();
-    targetContext.arc(430, 244, 18, 0, Math.PI * 2);
-    targetContext.arc(530, 244, 18, 0, Math.PI * 2);
-    targetContext.fill();
-    targetContext.strokeStyle = "#723928";
-    targetContext.lineWidth = 11;
-    targetContext.beginPath();
-    targetContext.arc(480, 315, 50, 0.12, Math.PI - 0.12);
-    targetContext.stroke();
-    targetContext.fillStyle = "#332016";
-    targetContext.beginPath();
-    targetContext.ellipse(480, 125, 165, 80, -0.02, Math.PI, Math.PI * 2);
-    targetContext.fill();
-    targetContext.strokeStyle = "rgba(255,255,255,0.55)";
-    targetContext.lineWidth = 3;
-    targetContext.strokeRect(330, 88, 300, 390);
-
-    for (let y = 0; y < this.height; y += 1) {
-      for (let x = 0; x < this.width; x += 1) {
-        const dx = (x - 480) / 155;
-        const dy = (y - 276) / 198;
-        const inFace = dx * dx + dy * dy < 1;
-        const inFrame = x >= 330 && x <= 630 && y >= 88 && y <= 478;
-        this.mask[y * this.width + x] = inFace || inFrame ? 1 : 0;
-      }
+  private async loadRound(index: number): Promise<void> {
+    this.phase = "loading";
+    this.screen.classList.remove("is-judging", "is-finished");
+    setHidden(this.promptElement, true);
+    this.setCanvasSquare();
+    this.clearCanvas();
+    try {
+      const round = index + 1;
+      const [outline, painting, maskImage, winner] = await Promise.all([
+        this.loadImage(`${RESOURCE_ROOT}outline-${round}.webp`),
+        this.loadImage(`${RESOURCE_ROOT}painting-${round}.webp`),
+        this.loadImage(`${RESOURCE_ROOT}mask-${round}.png`),
+        this.loadImage(`${RESOURCE_ROOT}winner-${round}.webp`)
+      ]);
+      const { mask, subjectPixels } = this.readMask(maskImage);
+      this.assets = { outline, painting, mask, winner, subjectPixels };
+      this.resetRound();
+      this.phase = "prompt";
+      setHidden(this.promptElement, false);
+      this.renderPainting();
+    } catch (error) {
+      console.error("Unable to load painting round assets", error);
+      this.onComplete?.();
     }
   }
 
-  private paintAt(event: PointerEvent): void {
-    const rect = this.canvas.getBoundingClientRect();
-    const x = Math.floor(((event.clientX - rect.left) / rect.width) * this.width);
-    const y = Math.floor(((event.clientY - rect.top) / rect.height) * this.height);
-    if (x < 0 || y < 0 || x >= this.width || y >= this.height) return;
-
-    const centerIndex = y * this.width + x;
-    this.score += this.mask[centerIndex] ? (this.painted[centerIndex] ? -2 : 8) : -5;
-    this.revealBrush(x, y);
+  private beginPainting(): void {
+    this.phase = "painting";
+    setHidden(this.promptElement, true);
     this.updateStats();
   }
 
+  private resetRound(): void {
+    this.timer = 60;
+    this.penaltyPoints = 0;
+    this.score = 0;
+    this.paintedSubjectPixels = 0;
+    this.judgedSeconds = 0;
+    this.lastPenaltyAt = -1000;
+    this.isPainting = false;
+    this.painted.fill(0);
+    this.revealContext.clearRect(0, 0, this.size, this.size);
+    this.updateStats();
+  }
+
+  private paintAt(event: PointerEvent): void {
+    const point = this.canvasPoint(event);
+    if (!point) return;
+    const now = performance.now();
+    const badRatio = this.badBrushRatio(point.x, point.y);
+    if (badRatio > 0.5 && now - this.lastPenaltyAt >= 1000) {
+      this.penaltyPoints += 1;
+      this.lastPenaltyAt = now;
+    }
+    this.revealBrush(point.x, point.y);
+    this.recalculateScore();
+    this.renderPainting();
+    this.updateStats();
+    if (this.assets && this.paintedSubjectPixels >= this.assets.subjectPixels) this.beginJudging();
+  }
+
   private revealBrush(cx: number, cy: number): void {
-    this.context.save();
-    this.context.beginPath();
-    const gradient = this.context.createRadialGradient(cx, cy, 0, cx, cy, this.brushRadius);
+    const gradient = this.revealContext.createRadialGradient(cx, cy, 0, cx, cy, this.brushRadius);
     gradient.addColorStop(0, "rgba(255,255,255,1)");
-    gradient.addColorStop(0.72, "rgba(255,255,255,0.85)");
+    gradient.addColorStop(0.72, "rgba(255,255,255,0.88)");
     gradient.addColorStop(1, "rgba(255,255,255,0)");
-    this.context.fillStyle = gradient;
-    this.context.arc(cx, cy, this.brushRadius, 0, Math.PI * 2);
-    this.context.clip();
-    this.context.drawImage(
-      this.target,
-      cx - this.brushRadius,
-      cy - this.brushRadius,
-      this.brushRadius * 2,
-      this.brushRadius * 2,
-      cx - this.brushRadius,
-      cy - this.brushRadius,
-      this.brushRadius * 2,
-      this.brushRadius * 2
-    );
-    this.context.restore();
+    this.revealContext.fillStyle = gradient;
+    this.revealContext.beginPath();
+    this.revealContext.arc(cx, cy, this.brushRadius, 0, Math.PI * 2);
+    this.revealContext.fill();
 
     const minX = Math.max(0, cx - this.brushRadius);
-    const maxX = Math.min(this.width - 1, cx + this.brushRadius);
+    const maxX = Math.min(this.size - 1, cx + this.brushRadius);
     const minY = Math.max(0, cy - this.brushRadius);
-    const maxY = Math.min(this.height - 1, cy + this.brushRadius);
+    const maxY = Math.min(this.size - 1, cy + this.brushRadius);
     const radiusSq = this.brushRadius * this.brushRadius;
     for (let y = minY; y <= maxY; y += 1) {
       for (let x = minX; x <= maxX; x += 1) {
         const dx = x - cx;
         const dy = y - cy;
-        if (dx * dx + dy * dy <= radiusSq) {
-          const index = y * this.width + x;
-          if (!this.painted[index]) {
-            this.painted[index] = 1;
-            if (this.mask[index]) this.paintedSubjectPixels += 1;
-          }
+        if (dx * dx + dy * dy > radiusSq) continue;
+        const index = y * this.size + x;
+        if (!this.painted[index]) {
+          this.painted[index] = 1;
+          if (this.assets?.mask[index]) this.paintedSubjectPixels += 1;
         }
       }
     }
   }
 
+  private badBrushRatio(cx: number, cy: number): number {
+    if (!this.assets) return 1;
+    let checked = 0;
+    let bad = 0;
+    const minX = Math.max(0, cx - this.brushRadius);
+    const maxX = Math.min(this.size - 1, cx + this.brushRadius);
+    const minY = Math.max(0, cy - this.brushRadius);
+    const maxY = Math.min(this.size - 1, cy + this.brushRadius);
+    const radiusSq = this.brushRadius * this.brushRadius;
+    for (let y = minY; y <= maxY; y += 3) {
+      for (let x = minX; x <= maxX; x += 3) {
+        const dx = x - cx;
+        const dy = y - cy;
+        if (dx * dx + dy * dy > radiusSq) continue;
+        checked += 1;
+        const index = y * this.size + x;
+        if (!this.assets.mask[index] || this.painted[index]) bad += 1;
+      }
+    }
+    return checked > 0 ? bad / checked : 1;
+  }
+
+  private renderPainting(): void {
+    if (!this.assets) return;
+    this.context.clearRect(0, 0, this.size, this.size);
+    this.context.save();
+    this.context.drawImage(this.assets.painting, 0, 0, this.size, this.size);
+    this.context.globalCompositeOperation = "destination-in";
+    this.context.drawImage(this.revealCanvas, 0, 0);
+    this.context.restore();
+    this.context.drawImage(this.assets.outline, 0, 0, this.size, this.size);
+  }
+
+  private beginJudging(): void {
+    if (this.phase === "judging") return;
+    this.phase = "judging";
+    this.isPainting = false;
+    this.judgedSeconds = 0;
+    this.screen.classList.add("is-judging", "is-finished");
+    setHidden(this.promptElement, true);
+    this.setCanvasJudging();
+    this.renderJudging();
+  }
+
+  private renderJudging(): void {
+    if (!this.assets) return;
+    const slide = clamp(this.judgedSeconds / 1.2, 0, 1);
+    const fade = clamp(this.judgedSeconds / 1.4, 0, 1);
+    const leftX = lerp(this.size * 0.5, 0, slide);
+    this.context.clearRect(0, 0, this.judgingWidth, this.size);
+    this.context.fillStyle = "#07080a";
+    this.context.fillRect(0, 0, this.judgingWidth, this.size);
+    this.context.drawImage(this.assets.painting, leftX, 0, this.size, this.size);
+    this.context.save();
+    this.context.globalAlpha = fade;
+    this.context.drawImage(this.assets.winner, this.size, 0, this.size, this.size);
+    this.context.restore();
+
+    if (this.judgedSeconds < 3) {
+      const alpha = 0.28 + Math.sin(this.judgedSeconds * Math.PI * 3.2) * 0.28 + 0.44;
+      this.context.save();
+      this.context.globalAlpha = clamp(alpha, 0, 1);
+      this.context.fillStyle = "#fff2c2";
+      this.context.font = "800 88px Inter, sans-serif";
+      this.context.textAlign = "center";
+      this.context.textBaseline = "middle";
+      this.context.fillText("Judging...", this.size, this.size * 0.5);
+      this.context.restore();
+    } else {
+      this.drawCheckmark();
+    }
+  }
+
+  private drawCheckmark(): void {
+    const cx = this.size * 1.5;
+    const cy = this.size * 0.5;
+    this.context.save();
+    this.context.strokeStyle = "#f1c84b";
+    this.context.lineWidth = 46;
+    this.context.lineCap = "round";
+    this.context.lineJoin = "round";
+    this.context.shadowColor = "rgba(0, 0, 0, 0.55)";
+    this.context.shadowBlur = 24;
+    this.context.beginPath();
+    this.context.moveTo(cx - 170, cy + 10);
+    this.context.lineTo(cx - 55, cy + 125);
+    this.context.lineTo(cx + 190, cy - 150);
+    this.context.stroke();
+    this.context.restore();
+  }
+
+  private advanceRound(): void {
+    this.currentRound += 1;
+    if (this.currentRound >= this.roundCount) {
+      this.phase = "inactive";
+      this.screen.classList.remove("is-judging", "is-finished");
+      this.clearCanvas();
+      this.onComplete?.();
+      return;
+    }
+    void this.loadRound(this.currentRound);
+  }
+
+  private canvasPoint(event: PointerEvent): { x: number; y: number } | null {
+    const rect = this.canvas.getBoundingClientRect();
+    const x = Math.floor(((event.clientX - rect.left) / rect.width) * this.size);
+    const y = Math.floor(((event.clientY - rect.top) / rect.height) * this.size);
+    if (x < 0 || y < 0 || x >= this.size || y >= this.size) return null;
+    return { x, y };
+  }
+
+  private recalculateScore(): void {
+    if (!this.assets || this.assets.subjectPixels <= 0) {
+      this.score = 0;
+      return;
+    }
+    const coveragePercent = Math.floor((this.paintedSubjectPixels / this.assets.subjectPixels) * 100);
+    this.score = Math.max(0, Math.min(1000, coveragePercent * 10) - this.penaltyPoints);
+  }
+
   private updateStats(): void {
-    const subjectPixels = this.mask.reduce((sum, value) => sum + value, 0);
+    this.recalculateScore();
     this.scoreElement.textContent = String(this.score);
-    this.coverageElement.textContent = `${Math.min(100, Math.round((this.paintedSubjectPixels / subjectPixels) * 100))}%`;
+    this.timerElement.textContent = String(Math.ceil(this.timer));
+  }
+
+  private readMask(maskImage: HTMLImageElement): { mask: Uint8Array; subjectPixels: number } {
+    const buffer = document.createElement("canvas");
+    buffer.width = this.size;
+    buffer.height = this.size;
+    const context = buffer.getContext("2d", { willReadFrequently: true });
+    if (!context) throw new Error("Mask buffer could not be initialized");
+    context.drawImage(maskImage, 0, 0, this.size, this.size);
+    const data = context.getImageData(0, 0, this.size, this.size).data;
+    const mask = new Uint8Array(this.size * this.size);
+    let subjectPixels = 0;
+    for (let i = 0; i < mask.length; i += 1) {
+      const offset = i * 4;
+      const isSubject = data[offset + 3] > 16 && data[offset] + data[offset + 1] + data[offset + 2] > 16;
+      if (isSubject) {
+        mask[i] = 1;
+        subjectPixels += 1;
+      }
+    }
+    return { mask, subjectPixels: Math.max(1, subjectPixels) };
+  }
+
+  private loadImage(src: string): Promise<HTMLImageElement> {
+    return new Promise((resolve, reject) => {
+      const image = new Image();
+      image.decoding = "async";
+      image.onload = () => resolve(image);
+      image.onerror = () => reject(new Error(`Unable to load ${src}`));
+      image.src = src;
+    });
+  }
+
+  private setCanvasSquare(): void {
+    this.canvas.width = this.size;
+    this.canvas.height = this.size;
+  }
+
+  private setCanvasJudging(): void {
+    this.canvas.width = this.judgingWidth;
+    this.canvas.height = this.size;
+  }
+
+  private clearCanvas(): void {
+    this.context.clearRect(0, 0, this.canvas.width, this.canvas.height);
   }
 }
 
@@ -2132,10 +2424,14 @@ class App {
   private canvas = bySelector<HTMLCanvasElement>(selectors.canvas);
   private splash = bySelector<HTMLElement>(selectors.splash);
   private mainMenu = bySelector<HTMLElement>(selectors.mainMenu);
+  private mainMenuVideo = bySelector<HTMLVideoElement>(selectors.mainMenuVideo);
   private hud = bySelector<HTMLElement>(selectors.hud);
   private paintingScreen = bySelector<HTMLElement>(selectors.paintingScreen);
   private cutsceneScreen = bySelector<HTMLElement>(selectors.cutsceneScreen);
-  private modeLabel = bySelector<HTMLElement>(selectors.modeLabel);
+  private cutsceneVideo = bySelector<HTMLVideoElement>(selectors.cutsceneVideo);
+  private cutsceneFallback = bySelector<HTMLElement>(selectors.cutsceneFallback);
+  private skipIndicator = bySelector<HTMLElement>(selectors.skipIndicator);
+  private stagePrompt = bySelector<HTMLElement>(selectors.stagePrompt);
   private engine: Engine;
   private scene: Scene;
   private lastFrameTime = performance.now();
@@ -2143,6 +2439,13 @@ class App {
   private menuBackground: MenuBackground;
   private exploration: ExplorationMode;
   private painting: PaintingMode;
+  private activeStage = 0;
+  private skipPressStartedAt = 0;
+  private skipFrame = 0;
+  private cutsceneAdvanceTimer = 0;
+  private cutsceneCompleted = false;
+  private cutsceneOnDone: (() => void) | null = null;
+  private menuReadyToken = 0;
 
   constructor() {
     this.engine = new Engine(this.canvas, true, { preserveDrawingBuffer: false, stencil: true, antialias: true });
@@ -2150,9 +2453,11 @@ class App {
     this.menuBackground = new MenuBackground(this.scene);
     this.exploration = new ExplorationMode(this.scene, this.canvas);
     this.painting = new PaintingMode(
+      bySelector<HTMLElement>(selectors.paintingScreen),
       bySelector<HTMLCanvasElement>(selectors.paintingCanvas),
       bySelector<HTMLElement>(selectors.paintScore),
-      bySelector<HTMLElement>(selectors.paintCoverage)
+      bySelector<HTMLElement>(selectors.paintTimer),
+      bySelector<HTMLElement>(selectors.paintingPrompt)
     );
     this.engine.runRenderLoop(() => {
       const now = performance.now();
@@ -2163,12 +2468,13 @@ class App {
     });
     this.bind();
     window.addEventListener("resize", () => this.resize());
+    this.music.start();
     void this.openRequestedStage();
   }
 
   private bind(): void {
-    bySelector<HTMLElement>(selectors.beginButton).addEventListener("click", (event) => {
-      if ((event.target as HTMLElement).tagName.toLowerCase() === "a") return;
+    this.splash.addEventListener("click", (event) => {
+      if ((event.target as HTMLElement).closest("a")) return;
       void this.begin();
     });
     bySelector<HTMLElement>(selectors.beginButton).addEventListener("keydown", (event) => {
@@ -2177,82 +2483,147 @@ class App {
         void this.begin();
       }
     });
-    bySelector<HTMLButtonElement>(selectors.newGameButton).addEventListener("click", () => this.startNewGame());
-    bySelector<HTMLButtonElement>(selectors.loadGameButton).addEventListener("click", () => this.loadGame());
-    bySelector<HTMLButtonElement>(selectors.paintingModeButton).addEventListener("click", () => this.showPainting());
-    bySelector<HTMLButtonElement>(selectors.exploreModeButton).addEventListener("click", () => this.showExplore());
-    bySelector<HTMLButtonElement>(selectors.menuModeButton).addEventListener("click", () => this.showMenu());
-    bySelector<HTMLButtonElement>(selectors.paintingDoneButton).addEventListener("click", () => this.showExplore());
+    bySelector<HTMLButtonElement>(selectors.newGameButton).addEventListener("click", (event) => {
+      event.stopPropagation();
+      this.startNewGame();
+    });
+    this.mainMenu.addEventListener("click", () => {
+      if (!this.mainMenu.classList.contains("hidden")) this.startNewGame();
+    });
+    window.addEventListener("keydown", () => {
+      if (!this.mainMenu.classList.contains("hidden")) this.startNewGame();
+    });
+    this.stagePrompt.addEventListener("pointerdown", () => this.beginStage2());
+    window.addEventListener("keydown", () => this.beginStage2());
+    window.addEventListener("keydown", () => this.startSkipHold());
+    window.addEventListener("keyup", () => this.stopSkipHold());
+    window.addEventListener("pointerdown", () => this.startSkipHold());
+    window.addEventListener("pointerup", () => this.stopSkipHold());
+    window.addEventListener("pointercancel", () => this.stopSkipHold());
   }
 
   private update(dt: number): void {
     this.menuBackground.update();
     this.exploration.update(dt);
+    this.painting.update(dt);
   }
 
   private async begin(): Promise<void> {
-    await this.music.start();
+    this.music.start();
     await this.preload();
     this.showMenu();
   }
 
   private async openRequestedStage(): Promise<void> {
     const stage = Number(new URLSearchParams(window.location.search).get("s") ?? 0);
-    if (![1, 2, 3].includes(stage)) return;
+    if (![1, 2, 3, 4, 5].includes(stage)) return;
     await this.preload();
     setHidden(this.splash, true);
-    if (stage === 1) this.showCutscene(false);
-    if (stage === 2) this.showExplore();
-    if (stage === 3) this.showPainting();
+    if (stage === 1) this.showCutscene(1, () => this.showStage2());
+    if (stage === 2) this.showStage2();
+    if (stage === 3) this.showCutscene(3, () => this.showPainting());
+    if (stage === 4) this.showPainting();
+    if (stage === 5) this.showStage5();
   }
 
   private async preload(): Promise<void> {
     await Promise.allSettled([
       DracoCompression.Default.whenReadyAsync(),
-      fetch(`${RESOURCE_ROOT}${HERO_MODEL}`, { cache: "force-cache" })
+      fetch(`${RESOURCE_ROOT}${HERO_MODEL}`, { cache: "force-cache" }),
+      fetch(this.videoSource("mainmenu"), { cache: "force-cache" }),
+      fetch(this.videoSource("vid1"), { cache: "force-cache" }),
+      fetch(this.videoSource("vid2"), { cache: "force-cache" }),
+      fetch(this.videoSource("vid3"), { cache: "force-cache" })
     ]);
   }
 
   private showMenu(): void {
-    this.menuBackground.setActive(true);
+    const readyToken = ++this.menuReadyToken;
+    this.mainMenu.classList.add("main-menu-loading");
+    this.menuBackground.setActive(false);
     this.exploration.setActive(false);
+    this.music.setCutsceneDucked(false);
+    this.stopCutsceneVideo();
+    this.activeStage = 0;
     setHidden(this.splash, true);
     setHidden(this.mainMenu, false);
     setHidden(this.hud, true);
     setHidden(this.paintingScreen, true);
     setHidden(this.cutsceneScreen, true);
+    setHidden(this.stagePrompt, true);
+    void this.playMainMenuVideoWhenReady(readyToken);
   }
 
   private startNewGame(): void {
+    this.menuReadyToken += 1;
     localStorage.setItem("painter-of-makli-save", JSON.stringify({ startedAt: new Date().toISOString(), scene: "explore" }));
-    this.showCutscene(true);
+    this.showCutscene(1, () => this.showStage2());
   }
 
-  private loadGame(): void {
-    const save = localStorage.getItem("painter-of-makli-save");
-    if (save) {
-      this.showExplore();
-      return;
-    }
-    this.startNewGame();
-  }
-
-  private showCutscene(advanceToExplore: boolean): void {
+  private showCutscene(stage: keyof typeof CUTSCENE_VIDEO_BY_STAGE, onDone: () => void): void {
+    this.activeStage = stage;
     this.menuBackground.setActive(false);
     this.exploration.setActive(false);
+    this.music.setCutsceneDucked(true);
     setHidden(this.splash, true);
     setHidden(this.mainMenu, true);
     setHidden(this.hud, true);
     setHidden(this.paintingScreen, true);
     setHidden(this.cutsceneScreen, false);
-    bySelector<HTMLElement>(selectors.subtitleLine).textContent = "The first image waits beneath the dust.";
-    if (advanceToExplore) window.setTimeout(() => this.showExplore(), 2600);
+    setHidden(this.stagePrompt, true);
+    this.cutsceneFallback.classList.remove("hidden");
+    this.cutsceneVideo.src = this.videoSource(CUTSCENE_VIDEO_BY_STAGE[stage]);
+    this.cutsceneVideo.currentTime = 0;
+    window.clearTimeout(this.cutsceneAdvanceTimer);
+    this.cutsceneCompleted = false;
+    this.cutsceneOnDone = onDone;
+    this.cutsceneVideo.onended = () => {
+      if (!this.isCutsceneAtNaturalEnd()) {
+        const playPromise = this.cutsceneVideo.play();
+        if (playPromise) playPromise.catch(() => undefined);
+        return;
+      }
+      this.finishCutsceneAfterDelay(stage, onDone);
+    };
+    this.cutsceneVideo.oncanplay = () => this.cutsceneFallback.classList.add("hidden");
+    const playPromise = this.cutsceneVideo.play();
+    if (playPromise) playPromise.catch(() => undefined);
+  }
+
+  private isCutsceneAtNaturalEnd(): boolean {
+    const duration = this.cutsceneVideo.duration;
+    if (!Number.isFinite(duration) || duration <= 0) return true;
+    return this.cutsceneVideo.currentTime >= duration - 0.15;
+  }
+
+  private finishCutsceneAfterDelay(stage: keyof typeof CUTSCENE_VIDEO_BY_STAGE, onDone: () => void): void {
+    if (this.cutsceneCompleted) return;
+    this.cutsceneCompleted = true;
+    this.stopSkipHold();
+    this.music.setCutsceneDucked(false);
+    this.cutsceneAdvanceTimer = window.setTimeout(() => {
+      if (this.activeStage === stage && !this.cutsceneScreen.classList.contains("hidden")) onDone();
+    }, CUTSCENE_END_DELAY_SECONDS * 1000);
+  }
+
+  private showStage2(): void {
+    this.activeStage = 2;
+    this.showExplore();
+    this.exploration.startStage2(() => this.showCutscene(3, () => this.showPainting()));
+    setHidden(this.stagePrompt, false);
+  }
+
+  private beginStage2(): void {
+    if (this.activeStage !== 2 || this.stagePrompt.classList.contains("hidden")) return;
+    setHidden(this.stagePrompt, true);
+    this.exploration.beginStage2();
   }
 
   private showExplore(): void {
     this.menuBackground.setActive(false);
     this.exploration.setActive(true);
-    this.modeLabel.textContent = "Exploration";
+    this.music.setCutsceneDucked(false);
+    this.stopCutsceneVideo();
     setHidden(this.splash, true);
     setHidden(this.mainMenu, true);
     setHidden(this.hud, false);
@@ -2261,15 +2632,94 @@ class App {
   }
 
   private showPainting(): void {
+    this.activeStage = 4;
     this.menuBackground.setActive(false);
     this.exploration.setActive(false);
-    this.painting.reset();
-    this.modeLabel.textContent = "Painting";
+    this.music.setCutsceneDucked(false);
+    this.stopCutsceneVideo();
+    this.painting.start(() => this.showStage5());
     setHidden(this.splash, true);
     setHidden(this.mainMenu, true);
     setHidden(this.hud, true);
     setHidden(this.paintingScreen, false);
     setHidden(this.cutsceneScreen, true);
+    setHidden(this.stagePrompt, true);
+  }
+
+  private showStage5(): void {
+    this.showCutscene(5, () => this.showMenu());
+  }
+
+  private stopCutsceneVideo(): void {
+    window.clearTimeout(this.cutsceneAdvanceTimer);
+    this.cutsceneVideo.pause();
+    this.cutsceneVideo.onended = null;
+    this.cutsceneVideo.oncanplay = null;
+    this.cutsceneVideo.removeAttribute("src");
+    this.cutsceneVideo.load();
+    this.cutsceneOnDone = null;
+    this.stopSkipHold();
+  }
+
+  private async playMainMenuVideoWhenReady(readyToken: number): Promise<void> {
+    this.mainMenuVideo.currentTime = 0;
+    const playPromise = this.mainMenuVideo.play();
+    if (playPromise) await playPromise.catch(() => undefined);
+    await this.waitForVideoFrame(this.mainMenuVideo);
+    if (this.menuReadyToken === readyToken && !this.mainMenu.classList.contains("hidden")) {
+      this.mainMenu.classList.remove("main-menu-loading");
+    }
+  }
+
+  private waitForVideoFrame(video: HTMLVideoElement): Promise<void> {
+    if (video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA) return Promise.resolve();
+    return new Promise((resolve) => {
+      const done = () => {
+        video.removeEventListener("loadeddata", done);
+        video.removeEventListener("canplay", done);
+        resolve();
+      };
+      video.addEventListener("loadeddata", done, { once: true });
+      video.addEventListener("canplay", done, { once: true });
+    });
+  }
+
+  private videoSource(name: string): string {
+    return `${RESOURCE_ROOT}${name}.${this.prefersWebmVideo() ? "webm" : "mp4"}`;
+  }
+
+  private prefersWebmVideo(): boolean {
+    return Boolean(this.cutsceneVideo.canPlayType('video/webm; codecs="av01"')) || Boolean(this.cutsceneVideo.canPlayType("video/webm"));
+  }
+
+  private startSkipHold(): void {
+    if (![1, 3, 5].includes(this.activeStage) || this.cutsceneScreen.classList.contains("hidden")) return;
+    if (this.skipPressStartedAt > 0) return;
+    this.skipPressStartedAt = performance.now();
+    setHidden(this.skipIndicator, false);
+    this.updateSkipHold();
+  }
+
+  private stopSkipHold(): void {
+    this.skipPressStartedAt = 0;
+    window.cancelAnimationFrame(this.skipFrame);
+    this.skipIndicator.style.setProperty("--skip-progress", "0");
+    setHidden(this.skipIndicator, true);
+  }
+
+  private updateSkipHold(): void {
+    if (this.skipPressStartedAt <= 0) return;
+    const progress = clamp((performance.now() - this.skipPressStartedAt) / (CUTSCENE_SKIP_SECONDS * 1000), 0, 1);
+    this.skipIndicator.style.setProperty("--skip-progress", String(progress));
+    if (progress >= 1) {
+      this.cutsceneVideo.pause();
+      const onDone = this.cutsceneOnDone;
+      if (onDone && this.activeStage in CUTSCENE_VIDEO_BY_STAGE) {
+        this.finishCutsceneAfterDelay(this.activeStage as keyof typeof CUTSCENE_VIDEO_BY_STAGE, onDone);
+      }
+      return;
+    }
+    this.skipFrame = window.requestAnimationFrame(() => this.updateSkipHold());
   }
 
   private resize(): void {
