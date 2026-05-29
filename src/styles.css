@@ -305,7 +305,7 @@ h2 {
   padding: 24px;
   color: #fff6da;
   background: rgba(0, 0, 0, 0.76);
-  font-size: clamp(28px, 6vw, 68px);
+  font-size: clamp(15px, 3vw, 35px);
   font-weight: 800;
   line-height: 1.05;
   text-align: center;
@@ -387,7 +387,7 @@ h2 {
 .stage-prompt-copy {
   max-width: 760px;
   color: #fff7de;
-  font-size: clamp(30px, 6vw, 70px);
+  font-size: clamp(15px, 3vw, 35px);
   font-weight: 800;
   line-height: 1.05;
   text-align: center;

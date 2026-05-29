@@ -40,16 +40,17 @@ const CUTSCENE_VIDEO_BY_STAGE = {
 } as const;
 const FULL_VOLUME = 10 ** (-4 / 20);
 const CUTSCENE_VOLUME = 10 ** (-18 / 20);
+const CUTSCENE_VIDEO_GAIN = 2.5;
 const VOLUME_TWEEN_SECONDS = 2;
 const CUTSCENE_SKIP_SECONDS = 2;
 const CUTSCENE_END_DELAY_SECONDS = 2;
 const STAGE_2_DESTINATION_NODE = "tripo_node_9ceb5ec4-f59b-4e91-85d9-771bd6b140b1_inst.004";
 const MAKLI_MAP_SCALE = 2 / 3;
 const STAGE_2_DESTINATION_FALLBACK = new Vector3(-1.7665 * MAKLI_MAP_SCALE, 0, 8.177 * MAKLI_MAP_SCALE);
-const STAGE_2_PATH_COMPLETION_RATIO = 0.92;
+const STAGE_2_PATH_COMPLETION_RATIO = 0.77;
 const STAGE_2_INITIAL_CAMERA_YAW = 45;
-const WALK_SPEED = 1.35 * 0.9 * 0.8;
-const HERO_WALK_ANIMATION_SPEED_RATIO = 2.03 * 1.8 * 1.8;
+const WALK_SPEED = 1.35 * 0.9 * 0.8 * 2;
+const HERO_WALK_ANIMATION_SPEED_RATIO = 2;
 const MODEL_FORWARD_OFFSET = 90;
 const KEYBOARD_ROTATION_SPEED = 1.9;
 const POINTER_ROTATION_SPEED = 0.0065;
@@ -57,6 +58,7 @@ const GAMEPAD_ROTATION_SPEED = 2.4;
 const THREAT_CLICK_RADIUS = 2.8;
 const THREAT_CLICK_RAY_WIDTH = 0.4;
 const CLICK_PULSE_SECONDS = 0.42;
+const THREAT_FADE_SECONDS = 1;
 const THREAT_SPEED = 2.5;
 const THREAT_BASE_MAX_COUNT = 8;
 const THREAT_DESTINATION_MAX_COUNT = 38;
@@ -81,7 +83,7 @@ const GRASS_MIN_ELEVATION = -0.45;
 const GRASS_CLUMP_RADIUS = 0.52;
 const GRASS_MIN_CLUMPS_PER_PATCH = 2;
 const GRASS_MAX_CLUMPS_PER_PATCH = 4;
-const GRASS_PATHSIDE_BONUS_RADIUS = 16;
+const GRASS_PATHSIDE_BONUS_RADIUS = 20;
 const GRASS_MIN_BLADES_PER_CLUMP = 10;
 const GRASS_MAX_BLADES_PER_CLUMP = 45;
 const LATE_DAY_SUN_DIRECTION = new Vector3(-0.616, -0.391, -0.684).normalize();
@@ -164,6 +166,14 @@ type ClickPulse = {
   startedAt: number;
 };
 
+type DyingThreat = {
+  root: TransformNode;
+  visualRoot: TransformNode | null;
+  material: StandardMaterial;
+  startedAt: number;
+  scale: boolean;
+};
+
 type LightingTuning = {
   emissive: number;
   shadowDarkness: number;
@@ -209,6 +219,12 @@ function bySelector<T extends Element>(selector: string): T {
 
 function setHidden(element: Element, hidden: boolean): void {
   element.classList.toggle("hidden", hidden);
+}
+
+function playSound(name: string): void {
+  const audio = new Audio(`${RESOURCE_ROOT}${name}`);
+  audio.volume = FULL_VOLUME / 1.5;
+  void audio.play();
 }
 
 function shouldPostClientLog(): boolean {
@@ -613,6 +629,7 @@ class ExplorationMode {
   private propBlockerCellSize = 12;
   private maxPropBlockerRadius = 0;
   private threats: Threat[] = [];
+  private dyingThreats: DyingThreat[] = [];
   private clickPulses: ClickPulse[] = [];
   private terrainMeshes: Mesh[] = [];
   private makliAtlasMetadata: MakliAtlasMetadata | null = null;
@@ -1439,6 +1456,23 @@ class ExplorationMode {
         }
       }
     }
+
+    const now = performance.now();
+    for (let i = this.dyingThreats.length - 1; i >= 0; i -= 1) {
+      const dying = this.dyingThreats[i];
+      const elapsed = (now - dying.startedAt) / 1000;
+      const t = clamp(elapsed / THREAT_FADE_SECONDS, 0, 1);
+      dying.material.alpha = this.threatGhostMaterial.alpha * (1 - t);
+      if (dying.scale) {
+        const s = 1 + t;
+        dying.root.scaling.set(s, s, s);
+      }
+      if (t >= 1) {
+        this.dyingThreats.splice(i, 1);
+        dying.material.dispose();
+        dying.root.dispose(false, false);
+      }
+    }
   }
 
   private pathProgress(): number {
@@ -1515,7 +1549,19 @@ class ExplorationMode {
 
   private removeThreat(index: number, scored = false): void {
     const [threat] = this.threats.splice(index, 1);
-    threat.root.dispose(false, false);
+    playSound(scored ? "zap.mp3" : "gotten.mp3");
+    const fadeMaterial = this.threatGhostMaterial.clone("threatGhostFade");
+    fadeMaterial.alpha = this.threatGhostMaterial.alpha;
+    if (threat.visualRoot) {
+      threat.visualRoot.getChildMeshes().forEach((mesh) => { mesh.material = fadeMaterial; });
+    }
+    this.dyingThreats.push({
+      root: threat.root,
+      visualRoot: threat.visualRoot,
+      material: fadeMaterial,
+      startedAt: performance.now(),
+      scale: !scored
+    });
     if (scored) {
       this.threatScore += 1;
       this.updateScoreUI();
@@ -1767,6 +1813,7 @@ class ExplorationMode {
     if (group) {
       if (group.name !== "NlaTrack.004") console.info(`Using animation track "${group.name}" for "NlaTrack.004"`);
       group.start(true, HERO_WALK_ANIMATION_SPEED_RATIO);
+      group.speedRatio = HERO_WALK_ANIMATION_SPEED_RATIO;
     } else {
       console.error("Missing Yusuf walk animation", animationGroups.map((animation) => animation.name));
     }
@@ -2078,9 +2125,12 @@ type PaintingRoundAssets = {
 };
 
 class PaintingMode {
+  private paintAudio = new Audio(`${RESOURCE_ROOT}paint.mp3`);
   private context: CanvasRenderingContext2D;
   private revealCanvas = document.createElement("canvas");
   private revealContext: CanvasRenderingContext2D;
+  private paintingLayerCanvas = document.createElement("canvas");
+  private paintingLayerContext: CanvasRenderingContext2D;
   private painted: Uint8Array;
   private assets: PaintingRoundAssets | null = null;
   private phase: "inactive" | "loading" | "prompt" | "painting" | "judging" = "inactive";
@@ -2095,8 +2145,10 @@ class PaintingMode {
   private onComplete: (() => void) | null = null;
   private readonly size = 1254;
   private readonly judgingWidth = 2508;
+  private readonly roundOrder = [2, 4, 1, 3];
   private readonly roundCount = 4;
   private readonly brushRadius = Math.round(1254 / 15);
+  private readonly completionRatio = 0.95;
 
   constructor(
     private screen: HTMLElement,
@@ -2107,12 +2159,18 @@ class PaintingMode {
   ) {
     const context = canvas.getContext("2d", { willReadFrequently: true });
     const revealContext = this.revealCanvas.getContext("2d", { willReadFrequently: true });
-    if (!context || !revealContext) throw new Error("Painting canvas could not be initialized");
+    const paintingLayerContext = this.paintingLayerCanvas.getContext("2d", { willReadFrequently: true });
+    if (!context || !revealContext || !paintingLayerContext) throw new Error("Painting canvas could not be initialized");
     this.context = context;
     this.revealContext = revealContext;
+    this.paintingLayerContext = paintingLayerContext;
     this.revealCanvas.width = this.size;
     this.revealCanvas.height = this.size;
+    this.paintingLayerCanvas.width = this.size;
+    this.paintingLayerCanvas.height = this.size;
     this.painted = new Uint8Array(this.size * this.size);
+    this.paintAudio.loop = true;
+    this.paintAudio.volume = FULL_VOLUME;
     this.bind();
     this.setCanvasSquare();
   }
@@ -2146,15 +2204,18 @@ class PaintingMode {
       this.canvas.setPointerCapture(event.pointerId);
       this.isPainting = true;
       this.paintAt(event);
+      void this.paintAudio.play();
     });
     this.canvas.addEventListener("pointermove", (event) => {
       if (this.phase === "painting" && this.isPainting) this.paintAt(event);
     });
     this.canvas.addEventListener("pointerup", () => {
       this.isPainting = false;
+      this.paintAudio.pause();
     });
     this.canvas.addEventListener("pointercancel", () => {
       this.isPainting = false;
+      this.paintAudio.pause();
     });
   }
 
@@ -2165,7 +2226,7 @@ class PaintingMode {
     this.setCanvasSquare();
     this.clearCanvas();
     try {
-      const round = index + 1;
+      const round = this.roundOrder[index];
       const [outline, painting, maskImage, winner] = await Promise.all([
         this.loadImage(`${RESOURCE_ROOT}outline-${round}.webp`),
         this.loadImage(`${RESOURCE_ROOT}painting-${round}.webp`),
@@ -2216,7 +2277,7 @@ class PaintingMode {
     this.recalculateScore();
     this.renderPainting();
     this.updateStats();
-    if (this.assets && this.paintedSubjectPixels >= this.assets.subjectPixels) this.beginJudging();
+    if (this.assets && this.paintedSubjectPixels >= this.completionPixelTarget()) this.beginJudging();
   }
 
   private revealBrush(cx: number, cy: number): void {
@@ -2272,19 +2333,23 @@ class PaintingMode {
 
   private renderPainting(): void {
     if (!this.assets) return;
+    this.paintingLayerContext.clearRect(0, 0, this.size, this.size);
+    this.paintingLayerContext.save();
+    this.paintingLayerContext.drawImage(this.assets.painting, 0, 0, this.size, this.size);
+    this.paintingLayerContext.globalCompositeOperation = "destination-in";
+    this.paintingLayerContext.drawImage(this.revealCanvas, 0, 0);
+    this.paintingLayerContext.restore();
+
     this.context.clearRect(0, 0, this.size, this.size);
-    this.context.save();
-    this.context.drawImage(this.assets.painting, 0, 0, this.size, this.size);
-    this.context.globalCompositeOperation = "destination-in";
-    this.context.drawImage(this.revealCanvas, 0, 0);
-    this.context.restore();
     this.context.drawImage(this.assets.outline, 0, 0, this.size, this.size);
+    this.context.drawImage(this.paintingLayerCanvas, 0, 0);
   }
 
   private beginJudging(): void {
     if (this.phase === "judging") return;
     this.phase = "judging";
     this.isPainting = false;
+    this.paintAudio.pause();
     this.judgedSeconds = 0;
     this.screen.classList.add("is-judging", "is-finished");
     setHidden(this.promptElement, true);
@@ -2374,6 +2439,10 @@ class PaintingMode {
     this.timerElement.textContent = String(Math.ceil(this.timer));
   }
 
+  private completionPixelTarget(): number {
+    return this.assets ? Math.ceil(this.assets.subjectPixels * this.completionRatio) : Number.POSITIVE_INFINITY;
+  }
+
   private readMask(maskImage: HTMLImageElement): { mask: Uint8Array; subjectPixels: number } {
     const buffer = document.createElement("canvas");
     buffer.width = this.size;
@@ -2429,6 +2498,8 @@ class App {
   private paintingScreen = bySelector<HTMLElement>(selectors.paintingScreen);
   private cutsceneScreen = bySelector<HTMLElement>(selectors.cutsceneScreen);
   private cutsceneVideo = bySelector<HTMLVideoElement>(selectors.cutsceneVideo);
+  private cutsceneAudioCtx: AudioContext | null = null;
+  private cutsceneGainNode: GainNode | null = null;
   private cutsceneFallback = bySelector<HTMLElement>(selectors.cutsceneFallback);
   private skipIndicator = bySelector<HTMLElement>(selectors.skipIndicator);
   private stagePrompt = bySelector<HTMLElement>(selectors.stagePrompt);
@@ -2572,6 +2643,7 @@ class App {
     setHidden(this.cutsceneScreen, false);
     setHidden(this.stagePrompt, true);
     this.cutsceneFallback.classList.remove("hidden");
+    this.ensureCutsceneAudioGain();
     this.cutsceneVideo.src = this.videoSource(CUTSCENE_VIDEO_BY_STAGE[stage]);
     this.cutsceneVideo.currentTime = 0;
     window.clearTimeout(this.cutsceneAdvanceTimer);
@@ -2588,6 +2660,16 @@ class App {
     this.cutsceneVideo.oncanplay = () => this.cutsceneFallback.classList.add("hidden");
     const playPromise = this.cutsceneVideo.play();
     if (playPromise) playPromise.catch(() => undefined);
+  }
+
+  private ensureCutsceneAudioGain(): void {
+    if (this.cutsceneGainNode) return;
+    this.cutsceneAudioCtx = new AudioContext();
+    const source = this.cutsceneAudioCtx.createMediaElementSource(this.cutsceneVideo);
+    this.cutsceneGainNode = this.cutsceneAudioCtx.createGain();
+    this.cutsceneGainNode.gain.value = CUTSCENE_VIDEO_GAIN;
+    source.connect(this.cutsceneGainNode);
+    this.cutsceneGainNode.connect(this.cutsceneAudioCtx.destination);
   }
 
   private isCutsceneAtNaturalEnd(): boolean {
